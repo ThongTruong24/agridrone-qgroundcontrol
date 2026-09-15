@@ -1,8 +1,10 @@
 <RCC>
     <qresource prefix="/custom/images">
         <file alias="control_actuator.png">res/Custom/Images/control_actuator.png</file>
+        <file alias="logo_i.png">res/Custom/Images/logo_i.png</file>
     </qresource>
     <qresource prefix="/Custom/qml">
         <file alias="QGroundControl/FlyView/FlyViewToolStripActionList.qml">src/FlyViewToolStripActionList.qml</file>
+        <file alias="QGroundControl/Toolbar/FlyViewToolBar.qml">src/FlyViewToolBar.qml</file>
     </qresource>
 </RCC>

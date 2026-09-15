@@ -11,6 +11,7 @@
 #include "CameraSection.h"
 #include "Vehicle.h"
 #include "QGCMath.h"
+#include "THACOMAVLink.h"
 
 #include <QtCore/QStringList>
 #include <QtCore/QJsonArray>
@@ -663,6 +664,11 @@ bool SimpleMissionItem::friendlyEditAllowed(void) const
 {
     const MissionCommandUIInfo* uiInfo = MissionCommandTree::instance()->getUIInfo(_controllerVehicle, _previousVTOLMode, static_cast<MAV_CMD>(command()));
     if (uiInfo && uiInfo->friendlyEdit()) {
+        // THACO External XYZ is a non-position marker with no editable params.
+        // Allow friendly edit even with autoContinue=false.
+        if (command() == MAV_CMD_THACO_EXTERNAL_XYZ_ENUM) {
+            return true;
+        }
         if (!_missionItem.autoContinue()) {
             return false;
         }
@@ -864,7 +870,14 @@ void SimpleMissionItem::_setDefaultsForCommand(void)
         _missionItem.setParam7(0);
     }
 
+    // Default autoContinue to true for most commands
     _missionItem.setAutoContinue(true);
+
+    // THACO External XYZ marker: non-position command with autoContinue=false
+    if (command == MAV_CMD_THACO_EXTERNAL_XYZ_ENUM) {
+        _missionItem.setAutoContinue(false);
+    }
+
     setRawEdit(false);
 }
 

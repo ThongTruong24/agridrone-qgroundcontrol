@@ -25,6 +25,16 @@
             }
         },
         {
+            "id":                   44000,
+            "rawName":              "MAV_CMD_THACO_EXTERNAL_XYZ",
+            "friendlyName":         "THACO External XYZ",
+            "description":          "THACO mission marker for external XYZ position reference. This is a non-position marker used to indicate a handover point for external trajectory control.",
+            "specifiesCoordinate":  false,
+            "standaloneCoordinate": false,
+            "friendlyEdit":         true,
+            "category":             "THACO"
+        },
+        {
             "id":                   16,
             "rawName":              "MAV_CMD_NAV_WAYPOINT",
             "friendlyName":         "Waypoint",
