@@ -1,1 +1,0 @@
-/home/lnh/THACOGroundControl/custom/mavlink/update_mavlink.sh
