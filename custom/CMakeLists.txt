@@ -14,28 +14,95 @@ set(QGC_RESOURCES ${QGC_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 
 qt_add_library(AgriDroneModule STATIC)
 
-qgc_set_qt_resource_alias(
+set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/BitFlagRow.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CameraTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CcTelemetryAdapter.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CcTelemetryPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CcTelemetryPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/DataStateBanner.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/KeyValueRow.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/LinksTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/MetricCard.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/NetworkTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/SectionCard.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/StatusBadge.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/VisionTab.qml
 )
+
+qgc_set_qt_resource_alias(${AGRIDRONE_QML_FILES})
 
 qt_add_qml_module(AgriDroneModule
     URI Custom.AgriDrone
     VERSION 1.0
     RESOURCE_PREFIX /qml
     QML_FILES
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
+        ${AGRIDRONE_QML_FILES}
     NO_PLUGIN
 )
+
+# Keep the upstream SettingsPages.json untouched. Generate a custom page model and
+# expose it at the resource path recognized by CustomOverrideInterceptor.
+set(AGRIDRONE_SETTINGS_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_settings_pages.py")
+set(AGRIDRONE_SETTINGS_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/AppSettings/SettingsPages.custom.json")
+set(AGRIDRONE_SETTINGS_MODEL "${CMAKE_CURRENT_BINARY_DIR}/generated/SettingsPagesModel.qml")
+
+file(GLOB AGRIDRONE_SETTINGS_GENERATOR_DEPENDENCIES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/tools/generators/settings_qml/*.py"
+    "${CMAKE_SOURCE_DIR}/tools/generators/settings_qml/templates/*.j2"
+    "${CMAKE_SOURCE_DIR}/tools/generators/common/*.py"
+    "${CMAKE_SOURCE_DIR}/tools/generators/*.py"
+)
+file(GLOB AGRIDRONE_SETTINGS_PAGE_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/AppSettings/pages/*.json"
+)
+
+add_custom_command(
+    OUTPUT "${AGRIDRONE_SETTINGS_MODEL}"
+    COMMAND Python3::Interpreter -m custom.tools.generate_settings_pages
+        --base-pages-dir "${CMAKE_SOURCE_DIR}/src/AppSettings/pages"
+        --custom-pages "${AGRIDRONE_SETTINGS_MANIFEST}"
+        --output "${AGRIDRONE_SETTINGS_MODEL}"
+    DEPENDS
+        "${AGRIDRONE_SETTINGS_GENERATOR}"
+        "${AGRIDRONE_SETTINGS_MANIFEST}"
+        ${AGRIDRONE_SETTINGS_GENERATOR_DEPENDENCIES}
+        ${AGRIDRONE_SETTINGS_PAGE_INPUTS}
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Generating AgriDrone settings page override"
+    VERBATIM
+)
+add_custom_target(GenerateAgriDroneSettingsPages DEPENDS "${AGRIDRONE_SETTINGS_MODEL}")
+add_dependencies(AgriDroneModule GenerateAgriDroneSettingsPages)
+
+set_source_files_properties("${AGRIDRONE_SETTINGS_MODEL}"
+    PROPERTIES
+        GENERATED TRUE
+        QT_RESOURCE_ALIAS "QGroundControl/AppSettings/SettingsPagesModel.qml"
+)
+qt_add_resources(AgriDroneModule "agri_settings_override"
+    PREFIX "/Custom/qml"
+    FILES "${AGRIDRONE_SETTINGS_MODEL}"
+)
+
+set(AGRIDRONE_TEST_SOURCES)
+if(QGC_BUILD_TESTING AND NOT ANDROID)
+    list(APPEND AGRIDRONE_TEST_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CcTelemetryControllerTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CcTelemetryControllerTest.h
+    )
+endif()
 
 set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CcTelemetryController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CcTelemetryController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.cc
@@ -45,6 +112,7 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin/CustomFirmwarePluginFactory.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin/CustomFirmwarePluginFactory.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MAVLink/THACOMAVLink.h
+    ${AGRIDRONE_TEST_SOURCES}
     CACHE INTERNAL "" FORCE
 )
 
