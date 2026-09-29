@@ -25,6 +25,7 @@ enforced by pre-commit hooks, so ignoring them wastes a build cycle. Full list w
 - **No `Q_ASSERT` in production code** — use defensive checks with early returns (`check-no-qassert`).
 - **No `QTest::ignoreMessage`** in tests — use `expectLogMessage`/`ignoreLogMessage` (`check-no-qtest-ignore-message`).
 - **No fixed-delay `QTest::qWait(<n>)`** — use `QTRY_*_WITH_TIMEOUT` or `QSignalSpy::wait` (`check-no-fixed-qwait`).
+- **MAVLink Single Source of Truth** — All MAVLink message definitions MUST be edited ONLY at `/home/lnh/Mavlink/custom/thaco_common.xml`. NEVER edit generated headers under `build/` or `custom/mavlink/` directly. Always run `/home/lnh/Mavlink/sync_all.sh` to update QGC.
 
 ## Critical Files (Read First!)
 

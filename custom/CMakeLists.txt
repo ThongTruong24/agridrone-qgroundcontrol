@@ -31,6 +31,17 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/SectionCard.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/StatusBadge.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/VisionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionSettings.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionLogPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionActionBar.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionConfigPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionConfigRow.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOverviewTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionTelemetryTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionNetworkingTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionCameraTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionVisionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionMissionTab.qml
 )
 
 qgc_set_qt_resource_alias(${AGRIDRONE_QML_FILES})
@@ -103,6 +114,15 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CcTelemetryController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CcTelemetryController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ITelemetryHandler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.cc

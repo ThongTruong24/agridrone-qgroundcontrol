@@ -61,3 +61,27 @@ QGC's interface is translated by the community — help translate it into your l
 ## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=mavlink/qgroundcontrol&type=Date)](https://star-history.com/#mavlink/qgroundcontrol&Date)
+
+---
+
+## THACO AgriDrone MAVLink Subsystem & SSOT Sync
+
+THACOGroundControl integrates custom MAVLink telemetry and two-phase configuration commit protocols (`thaco_common.xml`).
+
+All custom packet definitions are governed by the **Single Source of Truth (SSOT)** at `/home/lnh/Mavlink`.
+
+### Synchronizing MAVLink Definitions:
+```bash
+# From QGC repository root:
+./scripts/update_mavlink.sh
+# Or from custom/mavlink:
+./custom/mavlink/update_mavlink.sh
+```
+
+This command automatically:
+1. Validates schema and checks for local modifications in `custom/mavlink/thaco_common.xml`.
+2. Invokes the central generator to produce fresh C++11 MAVLink v2 headers.
+3. Synchronizes updated headers directly into:
+   - `build/_deps/mavlink-build/include/mavlink/thaco_common/`
+   - `.cache/CPM/mavlink/*/message_definitions/v1.0/thaco_common.xml`
+   - `custom/mavlink/thaco_common.xml`

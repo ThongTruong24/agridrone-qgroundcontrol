@@ -1,0 +1,76 @@
+{
+    "version": 1,
+    "fileType": "SettingsUI",
+    "imports": [
+        "Custom.AgriDrone"
+    ],
+    "groups": [
+        {
+            "heading": "System Overview",
+            "keywords": [
+                "system",
+                "overview",
+                "cpu",
+                "ram",
+                "temp",
+                "cli",
+                "mavlink"
+            ],
+            "component": "CompanionOverviewTab"
+        },
+        {
+            "heading": "Telemetry",
+            "keywords": [
+                "telemetry",
+                "mavlink",
+                "fc",
+                "siyi",
+                "baudrate",
+                "port",
+                "rate"
+            ],
+            "component": "CompanionTelemetryTab"
+        },
+        {
+            "heading": "Networking",
+            "keywords": [
+                "network",
+                "wifi",
+                "ethernet",
+                "ip",
+                "companion"
+            ],
+            "component": "CompanionNetworkingTab"
+        },
+        {
+            "heading": "Camera",
+            "keywords": [
+                "camera",
+                "video",
+                "rtsp",
+                "siyi",
+                "stream"
+            ],
+            "component": "CompanionCameraTab"
+        },
+        {
+            "heading": "Vision",
+            "keywords": [
+                "vision",
+                "ai",
+                "detection",
+                "tracking"
+            ],
+            "component": "CompanionVisionTab"
+        },
+        {
+            "heading": "Mission",
+            "keywords": [
+                "mission",
+                "task",
+                "waypoint"
+            ],
+            "component": "CompanionMissionTab"
+        }
+    ]
+}

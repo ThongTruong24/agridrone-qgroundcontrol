@@ -22,7 +22,7 @@ Item {
         ColumnLayout {
             id:         mainLayout
             x:          Math.max(0, root.width / 2 - width / 2)
-            width:      Math.max(implicitWidth, ScreenTools.defaultFontPixelWidth * 50)
+            width:      Math.min(root.width - ScreenTools.defaultFontPixelWidth * 4, Math.max(implicitWidth, ScreenTools.defaultFontPixelWidth * 65))
             spacing:    ScreenTools.defaultFontPixelHeight
         }
     }

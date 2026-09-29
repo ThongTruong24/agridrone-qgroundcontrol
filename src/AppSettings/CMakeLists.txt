@@ -23,6 +23,7 @@ file(GLOB _settings_metadata CONFIGURE_DEPENDS "${SETTINGS_METADATA_DIR}/*.Setti
 set(_generated_qml_names
     ADSBServerSettings.qml
     CommLinksSettings.qml
+    CompanionSettings.qml
     FlyViewSettings.qml
     GeneralSettings.qml
     LoggingSettings.qml

@@ -17,6 +17,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         StatusTextHandlerTest.h
         SysStatusSensorInfoTest.cc
         SysStatusSensorInfoTest.h
+        CompanionControllerTest.cc
+        CompanionControllerTest.h
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -29,3 +31,5 @@ add_qgc_test(MAVLinkStreamConfigTest LABELS Unit MAVLink)
 add_qgc_test(QGCMAVLinkTest LABELS Unit MAVLink)
 add_qgc_test(StatusTextHandlerTest LABELS Unit MAVLink)
 add_qgc_test(SysStatusSensorInfoTest LABELS Unit MAVLink)
+
+add_qgc_test(CompanionControllerTest LABELS Unit MAVLink)

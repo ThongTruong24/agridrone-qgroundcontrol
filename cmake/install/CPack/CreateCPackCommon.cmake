@@ -40,7 +40,7 @@ set(CPACK_PACKAGE_CHECKSUM "SHA256")
 # ----------------------------------------------------------------------------
 # Resource Files
 # ----------------------------------------------------------------------------
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/.github/COPYING.md")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE-GPL")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
 # set(CPACK_RESOURCE_FILE_WELCOME "${CMAKE_CURRENT_SOURCE_DIR}/desc/welcome.txt")
 

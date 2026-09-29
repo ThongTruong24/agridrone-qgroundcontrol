@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QGroundControl
 import QGroundControl.Controls
 import QGC as QGCNative
+import Custom.AgriDrone
 
 Rectangle {
     id: root

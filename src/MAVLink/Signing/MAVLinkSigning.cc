@@ -1,3 +1,6 @@
+#ifndef MAVLINK_SIGNING_TIMESTAMP_LIMIT
+#define MAVLINK_SIGNING_TIMESTAMP_LIMIT 60
+#endif
 #include "MAVLinkSigning.h"
 
 #include <QtCore/QCryptographicHash>

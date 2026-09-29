@@ -18,6 +18,7 @@ QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
     QQmlApplicationEngine* const qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
     _urlInterceptor = new CustomOverrideInterceptor;
     qmlEngine->addUrlInterceptor(_urlInterceptor);
+
     return qmlEngine;
 }
 

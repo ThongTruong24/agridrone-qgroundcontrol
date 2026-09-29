@@ -96,6 +96,15 @@
             "divider": true
         },
         {
+            "name": "Companion Computer",
+            "qml": "CompanionSettings.qml",
+            "icon": "qrc:/InstrumentValueIcons/drone.svg",
+            "pageDefinition": "Companion.SettingsUI.json"
+        },
+        {
+            "divider": true
+        },
+        {
             "name": "Help",
             "qml": "HelpSettings.qml",
             "icon": "qrc:/InstrumentValueIcons/question.svg"
