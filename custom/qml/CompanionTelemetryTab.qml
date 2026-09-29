@@ -18,10 +18,12 @@ ColumnLayout {
     property string _selectedFcPort: ""
     property int    _selectedFcBaud: 0
     property bool   _userInteractedFc: false
+    property bool   _fcInitialized: false
 
     property string _selectedSiyiPort: ""
     property int    _selectedSiyiBaud: 0
     property bool   _userInteractedSiyi: false
+    property bool   _siyiInitialized: false
 
     readonly property bool hasPendingFcChanges: (
         CompanionController.hasLinksTelemetry &&
@@ -128,12 +130,12 @@ ColumnLayout {
             QGCComboBox {
                 id: fcPortCombo
                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 22
-                enabled: CompanionController.hasLinksTelemetry && root.availablePortsList.length > 1
+                enabled: CompanionController.hasLinksTelemetry && CompanionController.configStatus !== "APPLYING" && root.availablePortsList.length > 1
                 model: root.availablePortsList
 
-                function syncToTarget() {
-                    var target = (root._userInteractedFc && root._selectedFcPort !== "")
-                                 ? root._selectedFcPort : CompanionController.fcPort
+                function syncToActive() {
+                    if (root._userInteractedFc || CompanionController.configStatus === "APPLYING") return
+                    var target = CompanionController.fcPort
                     if (!target || target === "") return
                     var idx = model ? model.indexOf(target) : -1
                     if (idx !== -1) {
@@ -144,8 +146,8 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToTarget()
-                onModelChanged: syncToTarget()
+                Component.onCompleted: syncToActive()
+                onModelChanged: syncToActive()
 
                 onActivated: (index) => {
                     root._userInteractedFc = true
@@ -175,12 +177,12 @@ ColumnLayout {
             QGCComboBox {
                 id: fcBaudCombo
                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 18
-                enabled: CompanionController.hasLinksTelemetry
+                enabled: CompanionController.hasLinksTelemetry && CompanionController.configStatus !== "APPLYING"
                 model: ["921600", "115200", "57600", "460800", "230400"]
 
-                function syncToTarget() {
-                    var target = (root._userInteractedFc && root._selectedFcBaud > 0)
-                                 ? root._selectedFcBaud : CompanionController.fcBaud
+                function syncToActive() {
+                    if (root._userInteractedFc || CompanionController.configStatus === "APPLYING") return
+                    var target = CompanionController.fcBaud
                     if (!target || target <= 0) return
                     var idx = model ? model.indexOf(target.toString()) : -1
                     if (idx !== -1) {
@@ -188,12 +190,12 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToTarget()
-                onModelChanged: syncToTarget()
+                Component.onCompleted: syncToActive()
+                onModelChanged: syncToActive()
 
                 onActivated: (index) => {
                     root._userInteractedFc = true
-                    root._selectedFcBaud = parseInt(model[index].split(" ")[0]) || 921600
+                    root._selectedFcBaud = parseInt(model[index].split(" ")[0]) || 0
                 }
             }
 
@@ -214,7 +216,6 @@ ColumnLayout {
                     } else {
                         port = CompanionController.fcPort
                     }
-                    if (!port || port === "") port = "/dev/ttyAMA4"
 
                     var baud = 0
                     if (root._userInteractedFc && root._selectedFcBaud > 0) {
@@ -224,11 +225,8 @@ ColumnLayout {
                     } else {
                         baud = CompanionController.fcBaud
                     }
-                    if (baud <= 0) baud = 921600
 
-                    root._userInteractedFc = false
-                    root._selectedFcPort = ""
-                    root._selectedFcBaud = 0
+                    // Keep _userInteractedFc true during apply so incoming 1Hz telemetry does NOT revert user selection
                     CompanionController.applyFcLink(port, baud)
                 }
             }
@@ -356,12 +354,12 @@ ColumnLayout {
             QGCComboBox {
                 id: siyiPortCombo
                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 22
-                enabled: CompanionController.hasLinksTelemetry && root.availablePortsList.length > 1
+                enabled: CompanionController.hasLinksTelemetry && CompanionController.configStatus !== "APPLYING" && root.availablePortsList.length > 1
                 model: root.availablePortsList
 
-                function syncToTarget() {
-                    var target = (root._userInteractedSiyi && root._selectedSiyiPort !== "")
-                                 ? root._selectedSiyiPort : CompanionController.siyiPort
+                function syncToActive() {
+                    if (root._userInteractedSiyi || CompanionController.configStatus === "APPLYING") return
+                    var target = CompanionController.siyiPort
                     if (!target || target === "") return
                     var idx = model ? model.indexOf(target) : -1
                     if (idx !== -1) {
@@ -372,8 +370,8 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToTarget()
-                onModelChanged: syncToTarget()
+                Component.onCompleted: syncToActive()
+                onModelChanged: syncToActive()
 
                 onActivated: (index) => {
                     root._userInteractedSiyi = true
@@ -403,12 +401,12 @@ ColumnLayout {
             QGCComboBox {
                 id: siyiBaudCombo
                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 18
-                enabled: CompanionController.hasLinksTelemetry
+                enabled: CompanionController.hasLinksTelemetry && CompanionController.configStatus !== "APPLYING"
                 model: ["115200", "57600", "921600", "460800", "230400"]
 
-                function syncToTarget() {
-                    var target = (root._userInteractedSiyi && root._selectedSiyiBaud > 0)
-                                 ? root._selectedSiyiBaud : CompanionController.siyiBaud
+                function syncToActive() {
+                    if (root._userInteractedSiyi || CompanionController.configStatus === "APPLYING") return
+                    var target = CompanionController.siyiBaud
                     if (!target || target <= 0) return
                     var idx = model ? model.indexOf(target.toString()) : -1
                     if (idx !== -1) {
@@ -416,12 +414,12 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToTarget()
-                onModelChanged: syncToTarget()
+                Component.onCompleted: syncToActive()
+                onModelChanged: syncToActive()
 
                 onActivated: (index) => {
                     root._userInteractedSiyi = true
-                    root._selectedSiyiBaud = parseInt(model[index].split(" ")[0]) || 115200
+                    root._selectedSiyiBaud = parseInt(model[index].split(" ")[0]) || 0
                 }
             }
 
@@ -442,7 +440,6 @@ ColumnLayout {
                     } else {
                         port = CompanionController.siyiPort
                     }
-                    if (!port || port === "") port = "/dev/ttyAMA0"
 
                     var baud = 0
                     if (root._userInteractedSiyi && root._selectedSiyiBaud > 0) {
@@ -452,11 +449,8 @@ ColumnLayout {
                     } else {
                         baud = CompanionController.siyiBaud
                     }
-                    if (baud <= 0) baud = 115200
 
-                    root._userInteractedSiyi = false
-                    root._selectedSiyiPort = ""
-                    root._selectedSiyiBaud = 0
+                    // Keep _userInteractedSiyi true during apply so incoming 1Hz telemetry does NOT revert user selection
                     CompanionController.applySiyiLink(port, baud)
                 }
             }
@@ -552,18 +546,38 @@ ColumnLayout {
         }
     }
 
-    // Auto-sync initial ports & baudrates from telemetry once, without overwriting user selections
+    // Auto-sync initial ports & baudrates from telemetry once, and re-sync upon ACK acceptance
     Connections {
         target: CompanionController
+
+        function onCommandAckReceived(command, result, text) {
+            if (command === 44011) { // MAV_CMD_THACO_APPLY_CONFIG
+                if (result === 0) { // MAV_RESULT_ACCEPTED
+                    root._userInteractedFc = false
+                    root._selectedFcPort = ""
+                    root._selectedFcBaud = 0
+                    root._userInteractedSiyi = false
+                    root._selectedSiyiPort = ""
+                    root._selectedSiyiBaud = 0
+                    fcPortCombo.syncToActive()
+                    fcBaudCombo.syncToActive()
+                    siyiPortCombo.syncToActive()
+                    siyiBaudCombo.syncToActive()
+                }
+            }
+        }
+
         function onLinksChanged() {
             if (CompanionController.hasLinksTelemetry) {
-                if (!root._userInteractedFc) {
-                    fcPortCombo.syncToTarget()
-                    fcBaudCombo.syncToTarget()
+                if (!root._fcInitialized && CompanionController.fcPort !== "") {
+                    root._fcInitialized = true
+                    fcPortCombo.syncToActive()
+                    fcBaudCombo.syncToActive()
                 }
-                if (!root._userInteractedSiyi) {
-                    siyiPortCombo.syncToTarget()
-                    siyiBaudCombo.syncToTarget()
+                if (!root._siyiInitialized && CompanionController.siyiPort !== "") {
+                    root._siyiInitialized = true
+                    siyiPortCombo.syncToActive()
+                    siyiBaudCombo.syncToActive()
                 }
             }
         }

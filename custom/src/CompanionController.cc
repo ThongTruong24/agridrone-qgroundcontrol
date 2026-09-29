@@ -405,20 +405,46 @@ void CompanionController::sendLinksConfig(int fcBaud, int siyiBaud, const QStrin
 void CompanionController::applyFcLink(const QString& fcPort, int fcBaud)
 {
     if (!_linksService) return;
-    QString port = fcPort.isEmpty() ? (_linksService->fcPort().isEmpty() ? QStringLiteral("/dev/ttyAMA4") : _linksService->fcPort()) : fcPort;
-    int baud = fcBaud > 0 ? fcBaud : (_linksService->fcBaud() > 0 ? _linksService->fcBaud() : 921600);
+    QString port = fcPort.trimmed();
+    if (port.isEmpty()) {
+        port = _linksService->fcPort().trimmed();
+    }
+    int baud = fcBaud > 0 ? fcBaud : _linksService->fcBaud();
+
+    if (port.isEmpty()) {
+        _showToast(QStringLiteral("Vui lòng chọn cổng cho Cube FC!"), true);
+        return;
+    }
+    if (baud <= 0) {
+        _showToast(QStringLiteral("Vui lòng chọn baudrate cho Cube FC!"), true);
+        return;
+    }
+
     _logMavlink("FC", "TX", QString("[TX CMD] Apply FC Link -> %1@%2 bps").arg(port).arg(baud), 5);
-    sendLinksConfig(baud, _linksService->siyiBaud() > 0 ? _linksService->siyiBaud() : 115200, port, _linksService->siyiPort().isEmpty() ? QStringLiteral("/dev/ttyAMA0") : _linksService->siyiPort());
+    sendLinksConfig(baud, _linksService->siyiBaud(), port, _linksService->siyiPort());
     applyConfig(1, true, "FC");
 }
 
 void CompanionController::applySiyiLink(const QString& siyiPort, int siyiBaud)
 {
     if (!_linksService) return;
-    QString port = siyiPort.isEmpty() ? (_linksService->siyiPort().isEmpty() ? QStringLiteral("/dev/ttyAMA0") : _linksService->siyiPort()) : siyiPort;
-    int baud = siyiBaud > 0 ? siyiBaud : (_linksService->siyiBaud() > 0 ? _linksService->siyiBaud() : 115200);
+    QString port = siyiPort.trimmed();
+    if (port.isEmpty()) {
+        port = _linksService->siyiPort().trimmed();
+    }
+    int baud = siyiBaud > 0 ? siyiBaud : _linksService->siyiBaud();
+
+    if (port.isEmpty()) {
+        _showToast(QStringLiteral("Vui lòng chọn cổng cho SIYI Link!"), true);
+        return;
+    }
+    if (baud <= 0) {
+        _showToast(QStringLiteral("Vui lòng chọn baudrate cho SIYI Link!"), true);
+        return;
+    }
+
     _logMavlink("SIYI", "TX", QString("[TX CMD] Apply SIYI Link -> %1@%2 bps").arg(port).arg(baud), 5);
-    sendLinksConfig(_linksService->fcBaud() > 0 ? _linksService->fcBaud() : 921600, baud, _linksService->fcPort().isEmpty() ? QStringLiteral("/dev/ttyAMA4") : _linksService->fcPort(), port);
+    sendLinksConfig(_linksService->fcBaud(), baud, _linksService->fcPort(), port);
     applyConfig(1, true, "SIYI");
 }
 
