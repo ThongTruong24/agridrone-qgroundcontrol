@@ -3,7 +3,7 @@
     "pages": [
         {
             "name": "CC Telemetry",
-            "url": "qrc:/qml/Custom/AgriDrone/CcTelemetryPage.qml",
+            "url": "qrc:/qml/Custom/AgriDrone/CompanionSettings.qml",
             "icon": "qrc:/InstrumentValueIcons/computer-desktop.svg"
         }
     ]
