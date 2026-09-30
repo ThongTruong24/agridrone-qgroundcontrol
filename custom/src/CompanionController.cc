@@ -27,10 +27,26 @@ QString fixedMavlinkString(const char (&text)[Size])
 QVariantMap emptyLinks()
 {
     return {
-        {QStringLiteral("fc_baudrate"), qulonglong{0}}, {QStringLiteral("siyi_baudrate"), qulonglong{0}},
-        {QStringLiteral("fc_bytes_rx"), qulonglong{0}}, {QStringLiteral("fc_bytes_tx"), qulonglong{0}},
-        {QStringLiteral("fc_bitrate_kbps"), 0.0},       {QStringLiteral("link_status_flags"), 0},
-        {QStringLiteral("fc_port"), QString()},         {QStringLiteral("siyi_port"), QString()},
+        {QStringLiteral("fc_baudrate"), qulonglong{0}},
+        {QStringLiteral("siyi_baudrate"), qulonglong{0}},
+        {QStringLiteral("fc_bytes_rx"), qulonglong{0}},
+        {QStringLiteral("fc_bytes_tx"), qulonglong{0}},
+        {QStringLiteral("fc_status"), 0},
+        {QStringLiteral("siyi_status"), 0},
+        {QStringLiteral("transport_type"), 0},
+        {QStringLiteral("available_ports"), QString()},
+        {QStringLiteral("fc_rx_rate"), 0.0},
+        {QStringLiteral("fc_tx_rate"), 0.0},
+        {QStringLiteral("fc_rx_loss"), 0.0},
+        {QStringLiteral("fc_tx_err"), qulonglong{0}},
+        {QStringLiteral("siyi_rx_rate"), 0.0},
+        {QStringLiteral("siyi_tx_rate"), 0.0},
+        {QStringLiteral("siyi_rx_loss"), 0.0},
+        {QStringLiteral("siyi_tx_err"), qulonglong{0}},
+        {QStringLiteral("siyi_bytes_rx"), qulonglong{0}},
+        {QStringLiteral("siyi_bytes_tx"), qulonglong{0}},
+        {QStringLiteral("fc_port"), QString()},
+        {QStringLiteral("siyi_port"), QString()},
     };
 }
 
@@ -53,20 +69,23 @@ QVariantMap emptyCamera()
         {QStringLiteral("serial_number"), QString()},
         {QStringLiteral("codec"), QString()},
         {QStringLiteral("encoder_mode"), QString()},
-        {QStringLiteral("rtsp_url"), QString()},
+        {QStringLiteral("rtsp_url_qgc"), QString()},
+        {QStringLiteral("rtsp_url_controller"), QString()},
+        {QStringLiteral("usb_speed_mode"), 0},
     };
 }
 
 QVariantMap emptyNetwork()
 {
     return {
-        {QStringLiteral("ap_channel"), 0},          {QStringLiteral("ap_ieee80211n"), 0},
-        {QStringLiteral("ap_wmm_enabled"), 0},      {QStringLiteral("ap_wpa"), 0},
-        {QStringLiteral("ap_client_count"), 0},     {QStringLiteral("wlan0_dhcp"), 0},
-        {QStringLiteral("dnsmasq_status"), 0},      {QStringLiteral("eth0_ip"), QString()},
-        {QStringLiteral("wlan0_ip"), QString()},    {QStringLiteral("ap_ip"), QString()},
-        {QStringLiteral("ap_ssid"), QString()},     {QStringLiteral("ap_wpa_passphrase"), QString()},
-        {QStringLiteral("ap_key_mgmt"), QString()}, {QStringLiteral("ap_hw_mode"), QString()},
+        {QStringLiteral("ap_channel"), 0},           {QStringLiteral("ap_ieee80211n"), 0},
+        {QStringLiteral("ap_wmm_enabled"), 0},       {QStringLiteral("ap_wpa"), 0},
+        {QStringLiteral("ap_client_count"), 0},      {QStringLiteral("wlan0_dhcp"), 0},
+        {QStringLiteral("dnsmasq_status"), 0},       {QStringLiteral("eth0_ip"), QString()},
+        {QStringLiteral("wlan0_ip"), QString()},     {QStringLiteral("ap_ip"), QString()},
+        {QStringLiteral("eth0_netmask"), QString()}, {QStringLiteral("ap_status"), 0},
+        {QStringLiteral("ap_ssid"), QString()},      {QStringLiteral("ap_wpa_passphrase"), QString()},
+        {QStringLiteral("ap_key_mgmt"), QString()},  {QStringLiteral("ap_hw_mode"), QString()},
     };
 }
 
@@ -92,6 +111,7 @@ bool isCcTelemetryMessage(const mavlink_message_t& message)
         case MAVLINK_MSG_ID_CC_TELEMETRY_CAMERA:
         case MAVLINK_MSG_ID_CC_TELEMETRY_NETWORK:
         case MAVLINK_MSG_ID_CC_TELEMETRY_VISION:
+        case MAVLINK_MSG_ID_CC_TELEMETRY_SYSTEM:
             return true;
         default:
             return false;
@@ -202,8 +222,11 @@ void CompanionController::_mavlinkMessageReceived(const mavlink_message_t& messa
 QStringList CompanionController::availablePorts() const
 {
     QStringList ports;
-    for (const QString& port :
-         {_links.value(QStringLiteral("fc_port")).toString(), _links.value(QStringLiteral("siyi_port")).toString()}) {
+    const QStringList reported =
+        _links.value(QStringLiteral("available_ports")).toString().split(',', Qt::SkipEmptyParts);
+    for (const QString& candidate : reported + QStringList{_links.value(QStringLiteral("fc_port")).toString(),
+                                                           _links.value(QStringLiteral("siyi_port")).toString()}) {
+        const QString port = candidate.trimmed();
         if (!port.isEmpty() && !ports.contains(port)) {
             ports.append(port);
         }
@@ -278,13 +301,11 @@ void CompanionController::applyLinksConfig(const QString& fcPort, int fcBaud, co
         _setConfigStatus(QStringLiteral("Failed"), QStringLiteral("No active MAVLink link"));
         return;
     }
-    mavlink_cc_telemetry_links_t payload{};
+    mavlink_cc_telemetry_links_t payload = _linksPacket;
     payload.fc_baudrate = static_cast<quint32>(fcBaud);
     payload.siyi_baudrate = static_cast<quint32>(siyiBaud);
-    payload.fc_bytes_rx = _links.value(QStringLiteral("fc_bytes_rx")).toUInt();
-    payload.fc_bytes_tx = _links.value(QStringLiteral("fc_bytes_tx")).toUInt();
-    payload.fc_bitrate_kbps = _links.value(QStringLiteral("fc_bitrate_kbps")).toFloat();
-    payload.link_status_flags = static_cast<quint8>(_links.value(QStringLiteral("link_status_flags")).toUInt());
+    std::memset(payload.fc_port, 0, sizeof(payload.fc_port));
+    std::memset(payload.siyi_port, 0, sizeof(payload.siyi_port));
     std::memcpy(payload.fc_port, fcBytes.constData(), std::min<qsizetype>(fcBytes.size(), sizeof(payload.fc_port) - 1));
     std::memcpy(payload.siyi_port, siyiBytes.constData(),
                 std::min<qsizetype>(siyiBytes.size(), sizeof(payload.siyi_port) - 1));
@@ -427,6 +448,7 @@ void CompanionController::_processMessage(const mavlink_message_t& message)
 {
     switch (message.msgid) {
         case MAVLINK_MSG_ID_CC_TELEMETRY_LINKS: {
+            mavlink_msg_cc_telemetry_links_decode(&message, &_linksPacket);
             _links = CompanionLinksService::decode(message);
             emit linksChanged();
             _markReceived(_linksState, &CompanionController::linksStatusChanged);
@@ -449,11 +471,21 @@ void CompanionController::_processMessage(const mavlink_message_t& message)
                 {QStringLiteral("depth_fps"), packet.depth_fps},
                 {QStringLiteral("profile_mode"), packet.profile_mode},
                 {QStringLiteral("enable_emitter"), packet.enable_emitter},
+                {QStringLiteral("camera_id"), packet.camera_id},
+                {QStringLiteral("is_default"), packet.is_default},
+                {QStringLiteral("camera_status"), packet.camera_status},
+                {QStringLiteral("error_code"), packet.error_code},
+                {QStringLiteral("usb_speed_mode"), packet.usb_speed_mode},
+                {QStringLiteral("rtsp_port"), packet.rtsp_port},
+                {QStringLiteral("camera_name"), fixedMavlinkString(packet.camera_name)},
+                {QStringLiteral("connection_port"), fixedMavlinkString(packet.connection_port)},
                 {QStringLiteral("camera_type"), fixedMavlinkString(packet.camera_type)},
                 {QStringLiteral("serial_number"), fixedMavlinkString(packet.serial_number)},
                 {QStringLiteral("codec"), fixedMavlinkString(packet.codec)},
                 {QStringLiteral("encoder_mode"), fixedMavlinkString(packet.encoder_mode)},
-                {QStringLiteral("rtsp_url"), fixedMavlinkString(packet.rtsp_url)},
+                {QStringLiteral("rtsp_url_qgc"), fixedMavlinkString(packet.rtsp_url_qgc)},
+                {QStringLiteral("rtsp_url_controller"), fixedMavlinkString(packet.rtsp_url_controller)},
+                {QStringLiteral("rtsp_url_laptop"), fixedMavlinkString(packet.rtsp_url_laptop)},
             };
             emit cameraChanged();
             _markReceived(_cameraState, &CompanionController::cameraStatusChanged);
@@ -470,9 +502,24 @@ void CompanionController::_processMessage(const mavlink_message_t& message)
                 {QStringLiteral("ap_client_count"), packet.ap_client_count},
                 {QStringLiteral("wlan0_dhcp"), packet.wlan0_dhcp},
                 {QStringLiteral("dnsmasq_status"), packet.dnsmasq_status},
+                {QStringLiteral("ap_status"), packet.ap_status},
+                {QStringLiteral("wlan0_status"), packet.wlan0_status},
+                {QStringLiteral("eth0_status"), packet.eth0_status},
+                {QStringLiteral("eth0_is_static"), packet.eth0_is_static},
+                {QStringLiteral("wlan0_rssi"), packet.wlan0_rssi},
+                {QStringLiteral("uap0_rx_kb"), qulonglong{packet.uap0_rx_kb}},
+                {QStringLiteral("uap0_tx_kb"), qulonglong{packet.uap0_tx_kb}},
+                {QStringLiteral("wlan0_rx_kb"), qulonglong{packet.wlan0_rx_kb}},
+                {QStringLiteral("wlan0_tx_kb"), qulonglong{packet.wlan0_tx_kb}},
+                {QStringLiteral("eth0_rx_kb"), qulonglong{packet.eth0_rx_kb}},
+                {QStringLiteral("eth0_tx_kb"), qulonglong{packet.eth0_tx_kb}},
                 {QStringLiteral("eth0_ip"), fixedMavlinkString(packet.eth0_ip)},
+                {QStringLiteral("eth0_netmask"), fixedMavlinkString(packet.eth0_netmask)},
                 {QStringLiteral("wlan0_ip"), fixedMavlinkString(packet.wlan0_ip)},
+                {QStringLiteral("wlan0_netmask"), fixedMavlinkString(packet.wlan0_netmask)},
+                {QStringLiteral("wlan0_ssid"), fixedMavlinkString(packet.wlan0_ssid)},
                 {QStringLiteral("ap_ip"), fixedMavlinkString(packet.ap_ip)},
+                {QStringLiteral("ap_netmask"), fixedMavlinkString(packet.ap_netmask)},
                 {QStringLiteral("ap_ssid"), fixedMavlinkString(packet.ap_ssid)},
                 {QStringLiteral("ap_wpa_passphrase"), fixedMavlinkString(packet.ap_wpa_passphrase)},
                 {QStringLiteral("ap_key_mgmt"), fixedMavlinkString(packet.ap_key_mgmt)},
@@ -498,6 +545,19 @@ void CompanionController::_processMessage(const mavlink_message_t& message)
             };
             emit visionChanged();
             _markReceived(_visionState, &CompanionController::visionStatusChanged);
+            break;
+        }
+        case MAVLINK_MSG_ID_CC_TELEMETRY_SYSTEM: {
+            mavlink_cc_telemetry_system_t packet{};
+            mavlink_msg_cc_telemetry_system_decode(&message, &packet);
+            _system = {{QStringLiteral("system_uptime_s"), qulonglong{packet.system_uptime_s}},
+                       {QStringLiteral("cpu_usage"), packet.cpu_usage},
+                       {QStringLiteral("ram_usage"), packet.ram_usage},
+                       {QStringLiteral("disk_usage"), packet.disk_usage},
+                       {QStringLiteral("cpu_temp"), packet.cpu_temp},
+                       {QStringLiteral("system_status"), packet.system_status}};
+            emit systemChanged();
+            _markReceived(_systemState, &CompanionController::systemStatusChanged);
             break;
         }
         default:
@@ -531,6 +591,7 @@ void CompanionController::_updateStaleStates()
     _updateStale(_cameraState, &CompanionController::cameraStatusChanged);
     _updateStale(_networkState, &CompanionController::networkStatusChanged);
     _updateStale(_visionState, &CompanionController::visionStatusChanged);
+    _updateStale(_systemState, &CompanionController::systemStatusChanged);
     _updateStale(_missionState, &CompanionController::missionStatusChanged);
 }
 
@@ -540,10 +601,13 @@ void CompanionController::_resetTelemetry()
     _camera = emptyCamera();
     _network = emptyNetwork();
     _vision = emptyVision();
+    _system.clear();
+    _linksPacket = {};
     _linksState = {};
     _cameraState = {};
     _networkState = {};
     _visionState = {};
+    _systemState = {};
     _missionState = {};
     _lastTriggerId = 0;
     _lastTriggerTimeBootMs = 0;
@@ -554,11 +618,13 @@ void CompanionController::_resetTelemetry()
     emit cameraChanged();
     emit networkChanged();
     emit visionChanged();
+    emit systemChanged();
     emit missionChanged();
     emit linksStatusChanged();
     emit cameraStatusChanged();
     emit networkStatusChanged();
     emit visionStatusChanged();
+    emit systemStatusChanged();
     emit missionStatusChanged();
     emit sourceChanged();
 }
@@ -587,6 +653,7 @@ void CompanionController::forceStaleForTest()
     _cameraState.lastReceivedMs = staleTimestamp;
     _networkState.lastReceivedMs = staleTimestamp;
     _visionState.lastReceivedMs = staleTimestamp;
+    _systemState.lastReceivedMs = staleTimestamp;
     _updateStaleStates();
 }
 

@@ -57,11 +57,12 @@ ColumnLayout {
                 QGCLabel { text: qsTr("Hotspot Status"); font.pointSize: ScreenTools.smallFontPointSize; opacity: 0.7 }
                 QGCLabel {
                     text: CompanionUiAdapter.hasNetworkTelemetry
-                          ? (CompanionUiAdapter.apStatus === 2 ? qsTr("ACTIVE (UP)") : qsTr("N/A"))
+                          ? (CompanionUiAdapter.apStatus === 1 ? qsTr("ACTIVE (UP)")
+                             : (CompanionUiAdapter.apStatus === 2 ? qsTr("CONFIGURING") : qsTr("DOWN")))
                           : "--"
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
-                    color: CompanionUiAdapter.hasNetworkTelemetry && CompanionUiAdapter.apStatus === 2 ? "#2ECC71" : qgcPal.text
+                    color: CompanionUiAdapter.hasNetworkTelemetry && CompanionUiAdapter.apStatus === 1 ? "#2ECC71" : qgcPal.text
                 }
             }
 

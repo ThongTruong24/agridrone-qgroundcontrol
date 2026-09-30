@@ -26,6 +26,7 @@ class CompanionController : public QObject
     Q_PROPERTY(QVariantMap ccTelemetryCamera READ ccTelemetryCamera NOTIFY cameraChanged)
     Q_PROPERTY(QVariantMap ccTelemetryNetwork READ ccTelemetryNetwork NOTIFY networkChanged)
     Q_PROPERTY(QVariantMap ccTelemetryVision READ ccTelemetryVision NOTIFY visionChanged)
+    Q_PROPERTY(QVariantMap ccTelemetrySystem READ ccTelemetrySystem NOTIFY systemChanged)
 
     Q_PROPERTY(bool linksReceived READ linksReceived NOTIFY linksStatusChanged)
     Q_PROPERTY(bool linksStale READ linksStale NOTIFY linksStatusChanged)
@@ -35,6 +36,8 @@ class CompanionController : public QObject
     Q_PROPERTY(bool networkStale READ networkStale NOTIFY networkStatusChanged)
     Q_PROPERTY(bool visionReceived READ visionReceived NOTIFY visionStatusChanged)
     Q_PROPERTY(bool visionStale READ visionStale NOTIFY visionStatusChanged)
+    Q_PROPERTY(bool systemReceived READ systemReceived NOTIFY systemStatusChanged)
+    Q_PROPERTY(bool systemStale READ systemStale NOTIFY systemStatusChanged)
     Q_PROPERTY(bool missionReceived READ missionReceived NOTIFY missionStatusChanged)
     Q_PROPERTY(bool missionStale READ missionStale NOTIFY missionStatusChanged)
     Q_PROPERTY(quint32 lastTriggerId READ lastTriggerId NOTIFY missionChanged)
@@ -60,6 +63,8 @@ public:
 
     QVariantMap ccTelemetryVision() const { return _vision; }
 
+    QVariantMap ccTelemetrySystem() const { return _system; }
+
     bool linksReceived() const { return _linksState.received; }
 
     bool linksStale() const { return _linksState.stale; }
@@ -75,6 +80,10 @@ public:
     bool visionReceived() const { return _visionState.received; }
 
     bool visionStale() const { return _visionState.stale; }
+
+    bool systemReceived() const { return _systemState.received; }
+
+    bool systemStale() const { return _systemState.stale; }
 
     bool missionReceived() const { return _missionState.received; }
 
@@ -117,10 +126,12 @@ signals:
     void cameraChanged();
     void networkChanged();
     void visionChanged();
+    void systemChanged();
     void linksStatusChanged();
     void cameraStatusChanged();
     void networkStatusChanged();
     void visionStatusChanged();
+    void systemStatusChanged();
     void missionChanged();
     void missionStatusChanged();
     void vehicleAvailableChanged();
@@ -170,10 +181,13 @@ private:
     QVariantMap _camera;
     QVariantMap _network;
     QVariantMap _vision;
+    QVariantMap _system;
+    mavlink_cc_telemetry_links_t _linksPacket{};
     MessageState _linksState;
     MessageState _cameraState;
     MessageState _networkState;
     MessageState _visionState;
+    MessageState _systemState;
     MessageState _missionState;
     quint32 _lastTriggerId = 0;
     quint32 _lastTriggerTimeBootMs = 0;

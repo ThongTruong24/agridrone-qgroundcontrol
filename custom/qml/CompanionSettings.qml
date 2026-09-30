@@ -67,7 +67,7 @@ Item {
 
                     // System live metrics
                     RowLayout {
-                        visible: CompanionUiAdapter.vehicleConnected && CompanionUiAdapter.cpuTemp > 0
+                        visible: CompanionUiAdapter.vehicleConnected && CompanionUiAdapter.hasSystemTelemetry
                         spacing: 12
 
                         QGCLabel {

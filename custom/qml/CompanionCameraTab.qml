@@ -108,8 +108,8 @@ ColumnLayout {
                 spacing: 2
                 QGCLabel { text: qsTr("USB Bus Mode"); font.pointSize: ScreenTools.smallFontPointSize; opacity: 0.7 }
                 QGCLabel {
-                    text: CompanionUiAdapter.hasCameraTelemetry && !isNaN(CompanionUiAdapter.usbSpeedMode)
-                          ? (CompanionUiAdapter.usbSpeedMode === 2 ? "USB 3.0 (SuperSpeed)" : "USB 2.0 (HighSpeed)")
+                    text: CompanionUiAdapter.hasCameraTelemetry
+                          ? (["--", "USB 2.0 (HighSpeed)", "USB 3.0 (SuperSpeed)", "USB 3.2"][CompanionUiAdapter.usbSpeedMode] || "--")
                           : "--"
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
