@@ -44,6 +44,8 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionMissionTab.qml
 )
 
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qgc_set_qt_resource_alias(${AGRIDRONE_QML_FILES})
 
 qt_add_qml_module(AgriDroneModule
@@ -51,7 +53,7 @@ qt_add_qml_module(AgriDroneModule
     VERSION 1.0
     RESOURCE_PREFIX /qml
     QML_FILES
-        ${AGRIDRONE_QML_FILES}
+    ${AGRIDRONE_QML_FILES}
     NO_PLUGIN
 )
 
@@ -74,14 +76,14 @@ file(GLOB AGRIDRONE_SETTINGS_PAGE_INPUTS CONFIGURE_DEPENDS
 add_custom_command(
     OUTPUT "${AGRIDRONE_SETTINGS_MODEL}"
     COMMAND Python3::Interpreter -m custom.tools.generate_settings_pages
-        --base-pages-dir "${CMAKE_SOURCE_DIR}/src/AppSettings/pages"
-        --custom-pages "${AGRIDRONE_SETTINGS_MANIFEST}"
-        --output "${AGRIDRONE_SETTINGS_MODEL}"
+    --base-pages-dir "${CMAKE_SOURCE_DIR}/src/AppSettings/pages"
+    --custom-pages "${AGRIDRONE_SETTINGS_MANIFEST}"
+    --output "${AGRIDRONE_SETTINGS_MODEL}"
     DEPENDS
-        "${AGRIDRONE_SETTINGS_GENERATOR}"
-        "${AGRIDRONE_SETTINGS_MANIFEST}"
-        ${AGRIDRONE_SETTINGS_GENERATOR_DEPENDENCIES}
-        ${AGRIDRONE_SETTINGS_PAGE_INPUTS}
+    "${AGRIDRONE_SETTINGS_GENERATOR}"
+    "${AGRIDRONE_SETTINGS_MANIFEST}"
+    ${AGRIDRONE_SETTINGS_GENERATOR_DEPENDENCIES}
+    ${AGRIDRONE_SETTINGS_PAGE_INPUTS}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Generating AgriDrone settings page override"
     VERBATIM
@@ -91,8 +93,8 @@ add_dependencies(AgriDroneModule GenerateAgriDroneSettingsPages)
 
 set_source_files_properties("${AGRIDRONE_SETTINGS_MODEL}"
     PROPERTIES
-        GENERATED TRUE
-        QT_RESOURCE_ALIAS "QGroundControl/AppSettings/SettingsPagesModel.qml"
+    GENERATED TRUE
+    QT_RESOURCE_ALIAS "QGroundControl/AppSettings/SettingsPagesModel.qml"
 )
 qt_add_resources(AgriDroneModule "agri_settings_override"
     PREFIX "/Custom/qml"
@@ -102,9 +104,12 @@ qt_add_resources(AgriDroneModule "agri_settings_override"
 set(AGRIDRONE_TEST_SOURCES)
 if(QGC_BUILD_TESTING AND NOT ANDROID)
     list(APPEND AGRIDRONE_TEST_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/CcTelemetryControllerTest.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/CcTelemetryControllerTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionControllerTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionControllerTest.h
     )
+    include(QGCTest)
+    add_qgc_test(CompanionControllerTest LABELS Unit Vehicle)
+    add_qgc_test(CompanionVehicleLifecycleTest LABELS Integration Vehicle)
 endif()
 
 set(CUSTOM_SOURCES

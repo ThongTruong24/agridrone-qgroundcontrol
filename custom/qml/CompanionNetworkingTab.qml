@@ -25,6 +25,7 @@ ColumnLayout {
     property string _draftEthGateway: ""
     property string _draftSiyiAirIp:  ""
 
+<<<<<<< HEAD
     function applyHotspot() {
         if (!CompanionController.hasNetworkTelemetry) return
         CompanionController.sendNetworkConfig(root._draftApChannel, root._draftApSsid, root._draftApPass, root._draftEthIp)
@@ -55,6 +56,16 @@ ColumnLayout {
                 if (CompanionController.apChannel > 0) root._draftApChannel = CompanionController.apChannel
                 if (CompanionController.eth0Ip !== "") root._draftEthIp = CompanionController.eth0Ip
                 if (CompanionController.eth0Netmask !== "") root._draftEthNetmask = CompanionController.eth0Netmask
+=======
+    Connections {
+        target: CompanionUiAdapter
+        function onNetworkChanged() {
+            if (CompanionUiAdapter.hasNetworkTelemetry) {
+                if (CompanionUiAdapter.apSsid !== "") root._draftApSsid = CompanionUiAdapter.apSsid
+                if (CompanionUiAdapter.apChannel > 0) root._draftApChannel = CompanionUiAdapter.apChannel
+                if (CompanionUiAdapter.eth0Ip !== "") root._draftEthIp = CompanionUiAdapter.eth0Ip
+                if (CompanionUiAdapter.eth0Netmask !== "") root._draftEthNetmask = CompanionUiAdapter.eth0Netmask
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             } else {
                 root._draftApSsid = ""
                 root._draftApChannel = 0
@@ -93,19 +104,22 @@ ColumnLayout {
                 spacing: 2
                 QGCLabel { text: qsTr("Connected Clients"); font.pointSize: ScreenTools.smallFontPointSize; opacity: 0.7 }
                 QGCLabel {
+<<<<<<< HEAD
                     text: CompanionController.hasNetworkTelemetry ? ("" + CompanionController.apClientCount + " devices") : "--"
+=======
+                    text: CompanionUiAdapter.hasNetworkTelemetry ? ("" + CompanionUiAdapter.apClientCount + " devices") : "--"
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
                 }
             }
 
-            Item { Layout.fillWidth: true }
-
-            ColumnLayout {
-                spacing: 2
-                QGCLabel { text: qsTr("Gateway IP"); font.pointSize: ScreenTools.smallFontPointSize; opacity: 0.7 }
                 QGCLabel {
+<<<<<<< HEAD
                     text: CompanionController.hasNetworkTelemetry && CompanionController.apIp !== "" ? CompanionController.apIp : "--"
+=======
+                    text: CompanionUiAdapter.hasNetworkTelemetry && CompanionUiAdapter.apIp !== "" ? CompanionUiAdapter.apIp : "--"
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
                 }
@@ -116,18 +130,21 @@ ColumnLayout {
         RowLayout {
             Layout.fillWidth: true
             spacing: ScreenTools.defaultFontPixelWidth
-
             QGCLabel {
-                text: qsTr("SSID:")
-                Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 14
-            }
 
             QGCTextField {
                 Layout.fillWidth: true
+<<<<<<< HEAD
                 enabled: CompanionController.hasNetworkTelemetry
                 placeholderText: CompanionController.hasNetworkTelemetry ? qsTr("Enter SSID") : qsTr("Waiting for telemetry...")
                 text: root._draftApSsid
                 onTextChanged: { if (CompanionController.hasNetworkTelemetry) root._draftApSsid = text.trim() }
+=======
+                enabled: CompanionUiAdapter.hasNetworkTelemetry
+                placeholderText: CompanionUiAdapter.hasNetworkTelemetry ? qsTr("Enter SSID") : qsTr("Waiting for telemetry...")
+                text: root._draftApSsid
+                onTextChanged: { if (CompanionUiAdapter.hasNetworkTelemetry) root._draftApSsid = text.trim() }
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
 
@@ -136,18 +153,19 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: ScreenTools.defaultFontPixelWidth
 
-            QGCLabel {
                 text: qsTr("Password:")
                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 14
             }
 
-            QGCTextField {
-                Layout.fillWidth: true
-                enabled: CompanionController.hasNetworkTelemetry
-                placeholderText: CompanionController.hasNetworkTelemetry ? qsTr("Enter password") : qsTr("Waiting for telemetry...")
-                text: root._draftApPass
                 echoMode: TextInput.Password
                 onTextChanged: { if (CompanionController.hasNetworkTelemetry) root._draftApPass = text.trim() }
+=======
+                enabled: CompanionUiAdapter.hasNetworkTelemetry
+                placeholderText: CompanionUiAdapter.hasNetworkTelemetry ? qsTr("Enter password") : qsTr("Waiting for telemetry...")
+                text: root._draftApPass
+                echoMode: TextInput.Password
+                onTextChanged: { if (CompanionUiAdapter.hasNetworkTelemetry) root._draftApPass = text.trim() }
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
 
@@ -155,6 +173,7 @@ ColumnLayout {
         LabelledComboBox {
             Layout.fillWidth: true
             label: qsTr("WiFi Channel")
+<<<<<<< HEAD
             enabled: CompanionController.hasNetworkTelemetry
             model: CompanionController.hasNetworkTelemetry
                    ? ["Channel 1 (2.412 GHz)", "Channel 6 (2.437 GHz)", "Channel 11 (2.462 GHz)"]
@@ -164,26 +183,32 @@ ColumnLayout {
                           : 0
             onActivated: (index) => {
                 if (CompanionController.hasNetworkTelemetry) {
+=======
+            enabled: CompanionUiAdapter.hasNetworkTelemetry
+            model: CompanionUiAdapter.hasNetworkTelemetry
+                   ? ["Channel 1 (2.412 GHz)", "Channel 6 (2.437 GHz)", "Channel 11 (2.462 GHz)"]
+                   : ["--"]
+            currentIndex: CompanionUiAdapter.hasNetworkTelemetry
+                          ? (root._draftApChannel === 1 ? 0 : (root._draftApChannel === 11 ? 2 : 1))
+                          : 0
+            onActivated: (index) => {
+                if (CompanionUiAdapter.hasNetworkTelemetry) {
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
                     root._draftApChannel = (index === 0) ? 1 : ((index === 2) ? 11 : 6)
                 }
             }
         }
 
-        // Action Buttons
         RowLayout {
             Layout.fillWidth: true
             spacing: ScreenTools.defaultFontPixelWidth
 
             QGCButton {
+<<<<<<< HEAD
                 text: qsTr("Apply Hotspot Config")
                 primary: true
                 enabled: CompanionController.hasNetworkTelemetry
-                onClicked: root.applyHotspot()
-            }
-
-            Item { Layout.fillWidth: true }
-
-            QGCButton {
+<<<<<<< HEAD
                 text: qsTr("Save Defaults")
                 enabled: CompanionController.hasNetworkTelemetry
                 onClicked: root.saveDefaults()
@@ -193,6 +218,15 @@ ColumnLayout {
                 text: qsTr("Restore Defaults")
                 enabled: CompanionController.hasNetworkTelemetry
                 onClicked: root.restoreDefaults()
+=======
+                  text: qsTr("Save Defaults")
+                  enabled: false
+            }
+
+            QGCButton {
+                  text: qsTr("Restore Defaults")
+                  enabled: false
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
     }
@@ -213,10 +247,17 @@ ColumnLayout {
 
             QGCTextField {
                 Layout.fillWidth: true
+<<<<<<< HEAD
                 enabled: CompanionController.hasNetworkTelemetry
                 placeholderText: CompanionController.hasNetworkTelemetry ? "192.168.xxx.xxx" : qsTr("Waiting for telemetry...")
                 text: root._draftEthIp
                 onTextChanged: { if (CompanionController.hasNetworkTelemetry) root._draftEthIp = text.trim() }
+=======
+                enabled: CompanionUiAdapter.hasNetworkTelemetry
+                placeholderText: CompanionUiAdapter.hasNetworkTelemetry ? "192.168.xxx.xxx" : qsTr("Waiting for telemetry...")
+                text: root._draftEthIp
+                onTextChanged: { if (CompanionUiAdapter.hasNetworkTelemetry) root._draftEthIp = text.trim() }
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
 
@@ -231,10 +272,17 @@ ColumnLayout {
 
             QGCTextField {
                 Layout.fillWidth: true
+<<<<<<< HEAD
                 enabled: CompanionController.hasNetworkTelemetry
                 placeholderText: CompanionController.hasNetworkTelemetry ? "255.255.255.0" : qsTr("Waiting for telemetry...")
                 text: root._draftEthNetmask
                 onTextChanged: { if (CompanionController.hasNetworkTelemetry) root._draftEthNetmask = text.trim() }
+=======
+                enabled: CompanionUiAdapter.hasNetworkTelemetry
+                placeholderText: CompanionUiAdapter.hasNetworkTelemetry ? "255.255.255.0" : qsTr("Waiting for telemetry...")
+                text: root._draftEthNetmask
+                onTextChanged: { if (CompanionUiAdapter.hasNetworkTelemetry) root._draftEthNetmask = text.trim() }
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
 
@@ -249,10 +297,17 @@ ColumnLayout {
 
             QGCTextField {
                 Layout.fillWidth: true
+<<<<<<< HEAD
                 enabled: CompanionController.hasNetworkTelemetry
                 placeholderText: CompanionController.hasNetworkTelemetry ? "192.168.xxx.xxx" : qsTr("Waiting for telemetry...")
                 text: root._draftEthGateway
                 onTextChanged: { if (CompanionController.hasNetworkTelemetry) root._draftEthGateway = text.trim() }
+=======
+                enabled: CompanionUiAdapter.hasNetworkTelemetry
+                placeholderText: CompanionUiAdapter.hasNetworkTelemetry ? "192.168.xxx.xxx" : qsTr("Waiting for telemetry...")
+                text: root._draftEthGateway
+                onTextChanged: { if (CompanionUiAdapter.hasNetworkTelemetry) root._draftEthGateway = text.trim() }
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
 
@@ -267,10 +322,17 @@ ColumnLayout {
 
             QGCTextField {
                 Layout.fillWidth: true
+<<<<<<< HEAD
                 enabled: CompanionController.hasNetworkTelemetry
                 placeholderText: CompanionController.hasNetworkTelemetry ? "192.168.xxx.xxx" : qsTr("Waiting for telemetry...")
                 text: root._draftSiyiAirIp
                 onTextChanged: { if (CompanionController.hasNetworkTelemetry) root._draftSiyiAirIp = text.trim() }
+=======
+                enabled: CompanionUiAdapter.hasNetworkTelemetry
+                placeholderText: CompanionUiAdapter.hasNetworkTelemetry ? "192.168.xxx.xxx" : qsTr("Waiting for telemetry...")
+                text: root._draftSiyiAirIp
+                onTextChanged: { if (CompanionUiAdapter.hasNetworkTelemetry) root._draftSiyiAirIp = text.trim() }
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
         }
 
@@ -280,9 +342,14 @@ ColumnLayout {
 
             QGCButton {
                 text: qsTr("Apply Ethernet Config")
+<<<<<<< HEAD
                 primary: true
                 enabled: CompanionController.hasNetworkTelemetry
                 onClicked: root.applyEthernet()
+=======
+                  primary: true
+                  enabled: false
+>>>>>>> 8b6f56d30ce7c6e10ee9813269705ecab608fdde
             }
 
             Item { Layout.fillWidth: true }

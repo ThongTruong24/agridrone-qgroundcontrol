@@ -15,7 +15,7 @@ set(
 
 set(
     QGC_MAVLINK_GIT_TAG
-    "main"
+    "40a03051918eb4e7bcf7a0b9b67ddf39c9d0f56e"
     CACHE STRING "THACO custom MAVLink revision"
     FORCE
 )

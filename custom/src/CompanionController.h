@@ -5,6 +5,7 @@
 #include <QtCore/QPointer>
 #include <QtCore/QVariantList>
 #include <QtCore/QVariantMap>
+#include <QtCore/QTimer>
 #include <QtQmlIntegration/QtQmlIntegration>
 #include "QGCMAVLink.h"
 #include "Vehicle.h"
@@ -306,6 +307,41 @@ public:
     Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;
     Q_INVOKABLE void clearLogHistory(const QString& category = QString());
 
+    // Test-time introspection helpers (available in all builds via friendship)
+    bool vehicleAvailable() const { return _activeVehicle != nullptr; }
+    int  vehicleEpoch()     const { return _vehicleEpoch; }
+    bool linksReceived()    const { return _linksService ? _linksService->hasLinksTelemetry() : false; }
+    bool linksStale()       const { return _linksStale; }
+    bool cameraReceived()   const { return _hasCameraTelemetry; }
+    bool networkReceived()  const { return _hasNetworkTelemetry; }
+    bool visionReceived()   const { return _hasVisionTelemetry; }
+    bool systemReceived()   const { return _hasSystemTelemetry; }
+    bool missionReceived()  const { return _hasMissionTelemetry; }
+    int  sourceSystemId()   const { return _sourceSystemId; }
+    int  sourceComponentId()const { return _sourceComponentId; }
+    QString configMessage() const { return _configMessage; }
+
+    QVariantMap ccTelemetryLinks() const;
+    QVariantMap ccTelemetryCamera() const;
+    QVariantMap ccTelemetryNetwork() const;
+    QVariantMap ccTelemetryVision() const;
+    QVariantMap ccTelemetrySystem() const;
+
+    bool logMatchesFilter(const QString& prefix, const QString& category, const QString& text) const;
+
+    // UART-specific apply / save (state-machine driven)
+    void applyLinksConfig(const QString& fcPort, int fcBaud, const QString& siyiPort, int siyiBaud);
+    void saveLinksConfig();
+    void _configTimedOut();
+    void _confirmationTimedOut();
+
+    // Test helpers
+    void processMessageForTest(const mavlink_message_t& message) { _onMavlinkMessageReceived(message); }
+    void resetForTest();
+    void forceStaleForTest();
+
+
+
 signals:
     void vehicleConnectedChanged();
     void cameraChanged();
@@ -414,6 +450,11 @@ private:
     quint32 _uap0RxKb = 0;
     quint32 _uap0TxKb = 0;
     int _dnsmasqStatus = 0;
+    int _apIeee80211n = 0;
+    int _apWmmEnabled = 0;
+    int _apWpa = 0;
+    QString _apWpaPassphrase;
+    QString _apKeyMgmt;
 
     QString _lastAppliedCategory = "FC";
     QString _configStatus{"IDLE"};
@@ -428,4 +469,24 @@ private:
     // Toast
     QString _lastToastMsg;
     bool _lastToastIsError = false;
+
+    // Source tracking (set when first CC telemetry received)
+    int _sourceSystemId = -1;
+    int _sourceComponentId = -1;
+    bool _linksStale = false;
+    int _vehicleEpoch = 0;
+
+    // Config message (error text)
+    QString _configMessage;
+
+    // Config state timers
+    QTimer* _configTimer = nullptr;
+    QTimer* _confirmTimer = nullptr;
+
+    // Pending links config
+    QString _pendingFcPort;
+    int _pendingFcBaud = 0;
+    QString _pendingSiyiPort;
+    int _pendingSiyiBaud = 0;
 };
+

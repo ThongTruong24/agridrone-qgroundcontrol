@@ -157,6 +157,9 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
 
     if (_activeVehicle) {
         _clearTelemetryState();
+        _sourceSystemId    = -1;
+        _sourceComponentId = -1;
+        _vehicleEpoch++;
     }
 
     _activeVehicle = vehicle;
@@ -204,6 +207,16 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
 
     if (_telemetryWatchdog) {
         _telemetryWatchdog->start();
+    }
+
+    // Track source system/component from CC telemetry messages (42010-42014, 32000)
+    constexpr uint16_t CC_MSG_IDS[] = {42010, 42011, 42012, 42013, 42014, 32000};
+    for (auto id : CC_MSG_IDS) {
+        if (message.msgid == id && message.compid == 191) {
+            _sourceSystemId    = message.sysid;
+            _sourceComponentId = message.compid;
+            break;
+        }
     }
 
     // Dispatch to registered handlers first (Links, etc.)
@@ -321,6 +334,13 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         _uap0RxKb = net.uap0_rx_kb;
         _uap0TxKb = net.uap0_tx_kb;
         _dnsmasqStatus = net.dnsmasq_status;
+        _apIeee80211n    = net.ap_ieee80211n;
+        _apWmmEnabled    = net.ap_wmm_enabled;
+        _apWpa           = net.ap_wpa;
+        _apWpaPassphrase = QString::fromUtf8(net.ap_wpa_passphrase,
+                               qstrnlen(net.ap_wpa_passphrase, sizeof(net.ap_wpa_passphrase)));
+        _apKeyMgmt       = QString::fromUtf8(net.ap_key_mgmt,
+                               qstrnlen(net.ap_key_mgmt, sizeof(net.ap_key_mgmt)));
 
         emit networkChanged();
         break;
@@ -713,4 +733,192 @@ void CompanionController::sendCliCommand(const QString& cmdText)
     }
 
     _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("Unknown CLI command: '%1'. Type 'help' for available commands.").arg(trimmed), 4);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New public API + test helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+QVariantMap CompanionController::ccTelemetryLinks() const
+{
+    QVariantMap m;
+    if (!_linksService) return m;
+    m[QStringLiteral("fc_baudrate")]    = static_cast<qulonglong>(_linksService->fcBaud());
+    m[QStringLiteral("siyi_baudrate")]  = static_cast<qulonglong>(_linksService->siyiBaud());
+    m[QStringLiteral("fc_bytes_rx")]    = static_cast<qulonglong>(_linksService->fcBytesRx());
+    m[QStringLiteral("fc_bytes_tx")]    = static_cast<qulonglong>(_linksService->fcBytesTx());
+    m[QStringLiteral("fc_tx_rate")]     = _linksService->fcTxRate();
+    m[QStringLiteral("fc_status")]      = _linksService->fcStatus();
+    m[QStringLiteral("siyi_status")]    = _linksService->siyiStatus();
+    m[QStringLiteral("fc_port")]        = _linksService->fcPort();
+    m[QStringLiteral("siyi_port")]      = _linksService->siyiPort();
+    const QString proto = _linksService->transportProtocol();
+    m[QStringLiteral("transport_type")] = (proto == QStringLiteral("UDP")) ? 2
+                                        : (proto == QStringLiteral("TCP")) ? 3 : 1;
+    return m;
+}
+
+QVariantMap CompanionController::ccTelemetryCamera() const
+{
+    QVariantMap m;
+    m[QStringLiteral("video_width")]      = _videoWidth;
+    m[QStringLiteral("video_height")]     = _videoHeight;
+    m[QStringLiteral("video_fps")]        = _videoFps;
+    m[QStringLiteral("depth_width")]      = _depthWidth;
+    m[QStringLiteral("depth_height")]     = _depthHeight;
+    m[QStringLiteral("depth_fps")]        = _depthFps;
+    m[QStringLiteral("bitrate_kbps")]     = _bitrateKbps;
+    m[QStringLiteral("bitrate_max_kbps")] = _bitrateMaxKbps;
+    m[QStringLiteral("vbv_buffer_kb")]    = _vbvBufferKb;
+    m[QStringLiteral("rotation")]         = _rotation;
+    m[QStringLiteral("profile_mode")]     = _profileMode;
+    m[QStringLiteral("enable_emitter")]   = _enableEmitter;
+    m[QStringLiteral("camera_type")]      = _cameraType;
+    m[QStringLiteral("serial_number")]    = _serialNumber;
+    m[QStringLiteral("codec")]            = _codec;
+    m[QStringLiteral("encoder_mode")]     = _encoderMode;
+    m[QStringLiteral("rtsp_url_qgc")]     = _rtspUrlQgc;
+    m[QStringLiteral("usb_speed_mode")]   = _usbSpeedMode;
+    return m;
+}
+
+QVariantMap CompanionController::ccTelemetryNetwork() const
+{
+    QVariantMap m;
+    m[QStringLiteral("eth0_ip")]           = _eth0Ip;
+    m[QStringLiteral("eth0_netmask")]      = _eth0Netmask;
+    m[QStringLiteral("eth0_status")]       = _eth0Status;
+    m[QStringLiteral("eth0_is_static")]    = _eth0IsStatic;
+    m[QStringLiteral("wlan0_ip")]          = _wlan0Ip;
+    m[QStringLiteral("wlan0_netmask")]     = _wlan0Netmask;
+    m[QStringLiteral("wlan0_status")]      = _wlan0Status;
+    m[QStringLiteral("wlan0_ssid")]        = _wlan0Ssid;
+    m[QStringLiteral("wlan0_rssi")]        = _wlan0Rssi;
+    m[QStringLiteral("wlan0_dhcp")]        = _wlan0Dhcp;
+    m[QStringLiteral("ap_ip")]             = _apIp;
+    m[QStringLiteral("ap_netmask")]        = _apNetmask;
+    m[QStringLiteral("ap_ssid")]           = _apSsid;
+    m[QStringLiteral("ap_channel")]        = _apChannel;
+    m[QStringLiteral("ap_client_count")]   = _apClientCount;
+    m[QStringLiteral("ap_status")]         = _apStatus;
+    m[QStringLiteral("ap_hw_mode")]        = _apHwMode;
+    m[QStringLiteral("dnsmasq_status")]    = _dnsmasqStatus;
+    m[QStringLiteral("ap_ieee80211n")]     = _apIeee80211n;
+    m[QStringLiteral("ap_wmm_enabled")]    = _apWmmEnabled;
+    m[QStringLiteral("ap_wpa")]            = _apWpa;
+    m[QStringLiteral("ap_wpa_passphrase")] = _apWpaPassphrase;
+    m[QStringLiteral("ap_key_mgmt")]       = _apKeyMgmt;
+    return m;
+}
+
+QVariantMap CompanionController::ccTelemetryVision() const
+{
+    QVariantMap m;
+    m[QStringLiteral("confidence_thresh")] = _confidenceThresh;
+    m[QStringLiteral("inference_fps")]     = _inferenceFps;
+    m[QStringLiteral("input_width")]       = _visionInputWidth;
+    m[QStringLiteral("input_height")]      = _visionInputHeight;
+    m[QStringLiteral("video_fps")]         = _visionVideoFps;
+    m[QStringLiteral("detections_count")]  = _detectionsCount;
+    m[QStringLiteral("status_flags")]      = _visionStatusFlags;
+    m[QStringLiteral("model_name")]        = _modelName;
+    m[QStringLiteral("input_source")]      = _inputSource;
+    return m;
+}
+
+QVariantMap CompanionController::ccTelemetrySystem() const
+{
+    QVariantMap m;
+    m[QStringLiteral("cpu_usage")]       = _cpuUsage;
+    m[QStringLiteral("ram_usage")]       = _ramUsage;
+    m[QStringLiteral("disk_usage")]      = _diskUsage;
+    m[QStringLiteral("cpu_temp")]        = _cpuTemp;
+    m[QStringLiteral("system_uptime_s")] = static_cast<qulonglong>(_uptimeS);
+    return m;
+}
+
+bool CompanionController::logMatchesFilter(const QString& prefix, const QString& category, const QString& text) const
+{
+    Q_UNUSED(category);
+    return text.startsWith(prefix);
+}
+
+void CompanionController::applyLinksConfig(const QString& fcPort, int fcBaud,
+                                            const QString& siyiPort, int siyiBaud)
+{
+    if (fcPort.toUtf8().size() > 15 || siyiPort.toUtf8().size() > 15) {
+        _configMessage = QStringLiteral("UART port must fit within 15 UTF-8 bytes");
+        _configStatus  = QStringLiteral("Failed");
+        emit configStatusChanged();
+        return;
+    }
+
+    _pendingFcPort   = fcPort;
+    _pendingFcBaud   = fcBaud;
+    _pendingSiyiPort = siyiPort;
+    _pendingSiyiBaud = siyiBaud;
+    _configMessage.clear();
+
+    if (_linksService) {
+        _linksService->sendLinksConfig(_activeVehicle ? _activeVehicle.data() : nullptr,
+                                       fcBaud, siyiBaud, fcPort, siyiPort);
+    }
+
+    applyConfig(1, true, QStringLiteral("FC"));
+
+    _configStatus = QStringLiteral("Applying");
+    emit configStatusChanged();
+
+    if (!_configTimer) {
+        _configTimer = new QTimer(this);
+        _configTimer->setSingleShot(true);
+        connect(_configTimer, &QTimer::timeout, this, &CompanionController::_configTimedOut);
+    }
+    _configTimer->start(5000);
+}
+
+void CompanionController::saveLinksConfig()
+{
+    saveDefaultConfig(1);
+
+    _configStatus = QStringLiteral("Applying");
+    emit configStatusChanged();
+
+    if (!_confirmTimer) {
+        _confirmTimer = new QTimer(this);
+        _confirmTimer->setSingleShot(true);
+        connect(_confirmTimer, &QTimer::timeout, this, &CompanionController::_confirmationTimedOut);
+    }
+    _confirmTimer->start(5000);
+}
+
+void CompanionController::_configTimedOut()
+{
+    if (_configStatus == QStringLiteral("Applying")) {
+        _configStatus = QStringLiteral("Timeout");
+        emit configStatusChanged();
+    }
+}
+
+void CompanionController::_confirmationTimedOut()
+{
+    if (_configStatus == QStringLiteral("WaitingTelemetry") ||
+        _configStatus == QStringLiteral("Applying")) {
+        _configStatus = QStringLiteral("Timeout");
+        emit configStatusChanged();
+    }
+}
+
+void CompanionController::resetForTest()
+{
+    _sourceSystemId    = -1;
+    _sourceComponentId = -1;
+    _linksStale        = false;
+    _clearTelemetryState();
+}
+
+void CompanionController::forceStaleForTest()
+{
+    _linksStale = true;
+    if (_telemetryWatchdog) _telemetryWatchdog->stop();
 }
