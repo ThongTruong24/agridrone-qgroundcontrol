@@ -18,21 +18,18 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/BitFlagRow.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CameraTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CcTelemetryAdapter.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CcTelemetryPage.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/CcTelemetryPanel.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/DataStateBanner.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/KeyValueRow.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/LinksTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/MetricCard.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/NetworkTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/SectionCard.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/StatusBadge.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CcTelemetry/VisionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionSettings.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionTelemetryTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionNetworkingTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionCameraTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionVisionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionMissionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionLogPanel.qml
 )
 
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qgc_set_qt_resource_alias(${AGRIDRONE_QML_FILES})
 
 qt_add_qml_module(AgriDroneModule
@@ -91,9 +88,12 @@ qt_add_resources(AgriDroneModule "agri_settings_override"
 set(AGRIDRONE_TEST_SOURCES)
 if(QGC_BUILD_TESTING AND NOT ANDROID)
     list(APPEND AGRIDRONE_TEST_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/CcTelemetryControllerTest.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/CcTelemetryControllerTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionControllerTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionControllerTest.h
     )
+    include(QGCTest)
+    add_qgc_test(CompanionControllerTest LABELS Unit Vehicle)
+    add_qgc_test(CompanionVehicleLifecycleTest LABELS Integration Vehicle)
 endif()
 
 set(CUSTOM_SOURCES
@@ -101,8 +101,14 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/CcTelemetryController.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/CcTelemetryController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.cc
