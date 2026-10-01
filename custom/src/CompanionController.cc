@@ -3,6 +3,7 @@
 #include "MultiVehicleManager.h"
 #include "MAVLinkProtocol.h"
 #include "VehicleLinkManager.h"
+#include "LinkManager.h"
 
 #include <QtCore/QDebug>
 #include <QtCore/QByteArray>
@@ -21,20 +22,32 @@ CompanionController::CompanionController(QObject* parent)
     _dispatcher->registerHandler(_linksService);
 
     // Connect service signals to facade
-    connect(_linksService, &CompanionLinksService::linksChanged, this, &CompanionController::linksChanged);
+    connect(_linksService, &CompanionLinksService::linksChanged, this, [this]() {
+        emit linksChanged();
+        emit vehicleConnectedChanged();
+    });
     connect(_linksService, &CompanionLinksService::availablePortsChanged, this, &CompanionController::availablePortsChanged);
     connect(_linksService, &CompanionLinksService::logMessage, _logService, &CompanionLogService::logMavlink);
     connect(_logService, &CompanionLogService::logEntriesChanged, this, &CompanionController::logEntriesChanged);
     connect(_logService, &CompanionLogService::logMessageAdded, this, &CompanionController::mavlinkLogMessage);
 
-    connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
+    MultiVehicleManager* const multiVehicleManager = MultiVehicleManager::instance();
+    connect(multiVehicleManager, &MultiVehicleManager::activeVehicleChanged,
             this, &CompanionController::_setActiveVehicle);
+    _setActiveVehicle(multiVehicleManager->activeVehicle());
+
+    // Ingest all MAVLink messages directly via MAVLinkProtocol (same as MAVLinkInspector)
+    connect(MAVLinkProtocol::instance(), &MAVLinkProtocol::messageReceived,
+            this, [this](LinkInterface* link, const mavlink_message_t& message) {
+                Q_UNUSED(link);
+                _onMavlinkMessageReceived(message);
+            });
 
     _telemetryWatchdog = new QTimer(this);
     _telemetryWatchdog->setInterval(3500); // 3.5s timeout for 1Hz telemetry
     connect(_telemetryWatchdog, &QTimer::timeout, this, [this]() {
-        if (_linksService && _linksService->hasLinksTelemetry()) {
-            _linksService->resetState();
+        if (_hasSystemTelemetry || (_linksService && _linksService->hasLinksTelemetry())) {
+            _clearTelemetryState();
             _showToast(QStringLiteral("Companion Telemetry stream timed out (OFFLINE)"), true);
         }
     });
@@ -42,7 +55,7 @@ CompanionController::CompanionController(QObject* parent)
 
 bool CompanionController::vehicleConnected() const
 {
-    return _activeVehicle != nullptr;
+    return (_activeVehicle != nullptr) || _hasSystemTelemetry || (_linksService && _linksService->hasLinksTelemetry());
 }
 
 void CompanionController::_clearTelemetryState()
@@ -135,6 +148,7 @@ void CompanionController::_clearTelemetryState()
     emit networkChanged();
     emit systemChanged();
     emit missionChanged();
+    emit vehicleConnectedChanged();
 }
 
 void CompanionController::_setActiveVehicle(Vehicle* vehicle)
@@ -142,8 +156,6 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
     if (_activeVehicle == vehicle) return;
 
     if (_activeVehicle) {
-        disconnect(_activeVehicle, &Vehicle::mavlinkMessageReceived,
-                   this, &CompanionController::_onMavlinkMessageReceived);
         _clearTelemetryState();
     }
 
@@ -151,8 +163,6 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
     emit vehicleConnectedChanged();
 
     if (_activeVehicle) {
-        connect(_activeVehicle, &Vehicle::mavlinkMessageReceived,
-                this, &CompanionController::_onMavlinkMessageReceived);
         qDebug() << "CompanionController connected to Vehicle ID:" << _activeVehicle->id();
     }
 }
@@ -185,6 +195,13 @@ void CompanionController::_showToast(const QString& msg, bool isError)
 
 void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& message)
 {
+    if (!_activeVehicle) {
+        Vehicle* active = MultiVehicleManager::instance()->activeVehicle();
+        if (active) {
+            _setActiveVehicle(active);
+        }
+    }
+
     if (_telemetryWatchdog) {
         _telemetryWatchdog->start();
     }
@@ -332,6 +349,7 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         mavlink_cc_telemetry_system_t sys;
         mavlink_msg_cc_telemetry_system_decode(&message, &sys);
 
+        const bool prevConn = vehicleConnected();
         _hasSystemTelemetry = true;
         _cpuUsage = sys.cpu_usage;
         _ramUsage = sys.ram_usage;
@@ -340,6 +358,9 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         _uptimeS = sys.system_uptime_s;
 
         emit systemChanged();
+        if (prevConn != vehicleConnected()) {
+            emit vehicleConnectedChanged();
+        }
         break;
     }
 
@@ -420,9 +441,25 @@ void CompanionController::applyFcLink(const QString& fcPort, int fcBaud)
         return;
     }
 
-    _logMavlink("FC", "TX", QString("[TX CMD] Apply FC Link -> %1@%2 bps").arg(port).arg(baud), 5);
-    sendLinksConfig(baud, _linksService->siyiBaud(), port, _linksService->siyiPort());
-    applyConfig(1, true, "FC");
+    QString siyiPort = _linksService->siyiPort().trimmed();
+    int siyiBaud = _linksService->siyiBaud();
+    if (siyiPort.isEmpty()) {
+        siyiPort = QStringLiteral("/dev/ttyAMA0");
+    }
+    if (siyiBaud <= 0) {
+        siyiBaud = 115200;
+    }
+
+    // Guard against port conflict
+    if (!port.isEmpty() && port == siyiPort) {
+        _showToast(QStringLiteral("Lỗi: Cổng %1 đang được sử dụng bởi SIYI! Vui lòng chọn cổng khác.").arg(port), true);
+        _logMavlink(QStringLiteral("FC"), QStringLiteral("ERR"), QStringLiteral("Xung đột cổng: Cube FC và SIYI không thể dùng chung cổng %1").arg(port), 3);
+        return;
+    }
+
+    _logMavlink(QStringLiteral("FC"), QStringLiteral("TX"), QString("[TX CMD] Apply FC Link -> %1@%2 bps (SIYI preserved: %3@%4 bps)").arg(port).arg(baud).arg(siyiPort).arg(siyiBaud), 5);
+    sendLinksConfig(baud, siyiBaud, port, siyiPort);
+    applyConfig(1, true, QStringLiteral("FC"));
 }
 
 void CompanionController::applySiyiLink(const QString& siyiPort, int siyiBaud)
@@ -443,21 +480,46 @@ void CompanionController::applySiyiLink(const QString& siyiPort, int siyiBaud)
         return;
     }
 
-    _logMavlink("SIYI", "TX", QString("[TX CMD] Apply SIYI Link -> %1@%2 bps").arg(port).arg(baud), 5);
-    sendLinksConfig(_linksService->fcBaud(), baud, _linksService->fcPort(), port);
-    applyConfig(1, true, "SIYI");
+    QString fcPort = _linksService->fcPort().trimmed();
+    int fcBaud = _linksService->fcBaud();
+    if (fcPort.isEmpty()) {
+        fcPort = QStringLiteral("/dev/ttyAMA4");
+    }
+    if (fcBaud <= 0) {
+        fcBaud = 921600;
+    }
+
+    // Guard against port conflict
+    if (!port.isEmpty() && port == fcPort) {
+        _showToast(QStringLiteral("Lỗi: Cổng %1 đang được sử dụng bởi Cube FC! Vui lòng chọn cổng khác.").arg(port), true);
+        _logMavlink(QStringLiteral("SIYI"), QStringLiteral("ERR"), QStringLiteral("Xung đột cổng: SIYI và Cube FC không thể dùng chung cổng %1").arg(port), 3);
+        return;
+    }
+
+    _logMavlink(QStringLiteral("SIYI"), QStringLiteral("TX"), QString("[TX CMD] Apply SIYI Link -> %1@%2 bps (FC preserved: %3@%4 bps)").arg(port).arg(baud).arg(fcPort).arg(fcBaud), 5);
+    sendLinksConfig(fcBaud, baud, fcPort, port);
+    applyConfig(1, true, QStringLiteral("SIYI"));
 }
 
 void CompanionController::applyConfig(int subsystemId, bool restartImmediate, const QString& originCategory)
 {
-    if (!_activeVehicle) {
-        _showToast("No Drone connection!", true);
-        return;
+    Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
+    SharedLinkInterfacePtr sharedLink;
+    if (vehicle && vehicle->vehicleLinkManager()) {
+        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
+    }
+    if (!sharedLink) {
+        const auto links = LinkManager::instance()->links();
+        for (const auto& l : links) {
+            if (l && l->isConnected()) {
+                sharedLink = l;
+                break;
+            }
+        }
     }
 
-    SharedLinkInterfacePtr sharedLink = _activeVehicle->vehicleLinkManager()->primaryLink().lock();
     if (!sharedLink) {
-        _showToast("No active MAVLink link found!", true);
+        _showToast(QStringLiteral("No active MAVLink link found!"), true);
         return;
     }
 
@@ -467,7 +529,7 @@ void CompanionController::applyConfig(int subsystemId, bool restartImmediate, co
 
     mavlink_message_t msg;
     mavlink_command_long_t cmd{};
-    cmd.target_system = _activeVehicle->id();
+    cmd.target_system = vehicle ? vehicle->id() : 1;
     cmd.target_component = kCompanionCompId;
     cmd.command = 44011; // MAV_CMD_THACO_APPLY_CONFIG
     cmd.confirmation = 0;
@@ -481,7 +543,11 @@ void CompanionController::applyConfig(int subsystemId, bool restartImmediate, co
         &msg,
         &cmd
     );
-    _activeVehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    if (vehicle) {
+        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    } else {
+        sharedLink->sendMessageThreadSafe(msg);
+    }
 
     _configStatus = "APPLYING";
     emit configStatusChanged();
@@ -504,14 +570,25 @@ void CompanionController::applyConfig(int subsystemId, bool restartImmediate, co
 
 void CompanionController::saveDefaultConfig(int subsystemId)
 {
-    if (!_activeVehicle) return;
-
-    SharedLinkInterfacePtr sharedLink = _activeVehicle->vehicleLinkManager()->primaryLink().lock();
+    Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
+    SharedLinkInterfacePtr sharedLink;
+    if (vehicle && vehicle->vehicleLinkManager()) {
+        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
+    }
+    if (!sharedLink) {
+        const auto links = LinkManager::instance()->links();
+        for (const auto& l : links) {
+            if (l && l->isConnected()) {
+                sharedLink = l;
+                break;
+            }
+        }
+    }
     if (!sharedLink) return;
 
     mavlink_message_t msg;
     mavlink_command_long_t cmd{};
-    cmd.target_system = _activeVehicle->id();
+    cmd.target_system = vehicle ? vehicle->id() : 1;
     cmd.target_component = kCompanionCompId;
     cmd.command = 44010; // MAV_CMD_THACO_SAVE_DEFAULT_CONFIG
     cmd.confirmation = 0;
@@ -524,7 +601,11 @@ void CompanionController::saveDefaultConfig(int subsystemId)
         &msg,
         &cmd
     );
-    _activeVehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    if (vehicle) {
+        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    } else {
+        sharedLink->sendMessageThreadSafe(msg);
+    }
 
     QString logTxt = QString("COMMAND_LONG #44010 (SAVE_DEFAULT) -> Subsystem: %1").arg(subsystemId);
     _logMavlink("FC", "TX", logTxt, 5);
@@ -536,14 +617,25 @@ void CompanionController::saveDefaultConfig(int subsystemId)
 
 void CompanionController::restoreDefaultConfig(int subsystemId)
 {
-    if (!_activeVehicle) return;
-
-    SharedLinkInterfacePtr sharedLink = _activeVehicle->vehicleLinkManager()->primaryLink().lock();
+    Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
+    SharedLinkInterfacePtr sharedLink;
+    if (vehicle && vehicle->vehicleLinkManager()) {
+        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
+    }
+    if (!sharedLink) {
+        const auto links = LinkManager::instance()->links();
+        for (const auto& l : links) {
+            if (l && l->isConnected()) {
+                sharedLink = l;
+                break;
+            }
+        }
+    }
     if (!sharedLink) return;
 
     mavlink_message_t msg;
     mavlink_command_long_t cmd{};
-    cmd.target_system = _activeVehicle->id();
+    cmd.target_system = vehicle ? vehicle->id() : 1;
     cmd.target_component = kCompanionCompId;
     cmd.command = 44012; // MAV_CMD_THACO_RESTORE_DEFAULT_CONFIG
     cmd.confirmation = 0;
@@ -556,7 +648,11 @@ void CompanionController::restoreDefaultConfig(int subsystemId)
         &msg,
         &cmd
     );
-    _activeVehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    if (vehicle) {
+        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    } else {
+        sharedLink->sendMessageThreadSafe(msg);
+    }
 
     QString logTxt = QString("COMMAND_LONG #44012 (RESTORE_DEFAULT) -> Subsystem: %1").arg(subsystemId);
     _logMavlink("FC", "TX", logTxt, 5);
@@ -579,10 +675,12 @@ void CompanionController::sendCliCommand(const QString& cmdText)
         return;
     }
     if (lower == "ping") {
-        if (!_activeVehicle) {
-            _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("ERR: No active MAVLink vehicle connection"), 3);
+        Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
+        if (!vehicle && !vehicleConnected()) {
+            _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("ERR: No active MAVLink connection"), 3);
         } else {
-            _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("PONG: Vehicle ID %1 online, Companion Comp ID %2 reachable").arg(_activeVehicle->id()).arg(kCompanionCompId), 6);
+            int vId = vehicle ? vehicle->id() : 1;
+            _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("PONG: Vehicle ID %1 online, Companion Comp ID %2 reachable").arg(vId).arg(kCompanionCompId), 6);
         }
         return;
     }

@@ -6,6 +6,7 @@
 
 #include <QtCore/QMutexLocker>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
 #include <QtNetwork/QHostInfo>
 #include <QtNetwork/QNetworkDatagram>
 #include <QtNetwork/QNetworkInterface>
@@ -296,6 +297,21 @@ bool UDPWorker::isConnected() const
     return (_socket && _socket->isValid() && _isConnected);
 }
 
+void UDPWorker::_sendHolePunch()
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    for (const std::shared_ptr<UDPClient> &target : _udpConfig->targetHosts()) {
+        if (!target->address.isNull()) {
+            qCDebug(UDPLinkLog) << "Sending UDP hole-punch wake-up to" << target->address << target->port;
+            const char punchBytes[] = { '\xfd', '\x00', '\x00', '\x00' };
+            (void) _socket->writeDatagram(punchBytes, sizeof(punchBytes), target->address, target->port);
+        }
+    }
+}
+
 void UDPWorker::setupSocket()
 {
     if (!_socket) {
@@ -306,6 +322,20 @@ void UDPWorker::setupSocket()
     _localAddresses = QSet(localAddresses.constBegin(), localAddresses.constEnd());
 
     _socket->setProxy(QNetworkProxy::NoProxy);
+
+    _holePunchTimer = new QTimer(this);
+    _holePunchTimer->setInterval(3000);
+    (void) connect(_holePunchTimer, &QTimer::timeout, this, [this]() {
+        if (!isConnected()) {
+            return;
+        }
+        QMutexLocker locker(&_sessionTargetsMutex);
+        if (!_sessionTargets.isEmpty()) {
+            return;
+        }
+        locker.unlock();
+        _sendHolePunch();
+    });
 
     (void) connect(_socket, &QUdpSocket::connected, this, &UDPWorker::_onSocketConnected);
     (void) connect(_socket, &QUdpSocket::disconnected, this, &UDPWorker::_onSocketDisconnected);
@@ -370,6 +400,11 @@ void UDPWorker::connectLink()
         qCWarning(UDPLinkLog) << "Failed to join multicast group" << _multicastGroup.toString();
     }
 
+    _sendHolePunch();
+    if (_holePunchTimer) {
+        _holePunchTimer->start();
+    }
+
 }
 
 void UDPWorker::disconnectLink()
@@ -380,6 +415,10 @@ void UDPWorker::disconnectLink()
     }
 
     qCDebug(UDPLinkLog) << "Disconnecting UDP link";
+
+    if (_holePunchTimer) {
+        _holePunchTimer->stop();
+    }
 
     (void) _socket->leaveMulticastGroup(_multicastGroup);
     _socket->close();

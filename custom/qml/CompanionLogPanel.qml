@@ -311,7 +311,7 @@ Item {
                         color:       root._textDebug
                         font.family: ScreenTools.fixedFontFamily
                         font.pointSize: ScreenTools.smallFontPointSize
-                        Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 8
+                        Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 13
                     }
 
                     // Severity tag badge
@@ -363,7 +363,7 @@ Item {
 
     // ── Listen for new STATUSTEXT from vehicle ───────────────────────────
     Connections {
-        target: root._activeVehicle ? root._activeVehicle : null
+        target: (root.serviceName === "MAVLink") ? null : (root._activeVehicle ? root._activeVehicle : null)
 
         function onNewFormattedMessage(formattedMessage) {
             var plain = formattedMessage.replace(/<[^>]+>/g, "")

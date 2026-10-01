@@ -1,4 +1,5 @@
 #include "CcTelemetryController.h"
+#include "MAVLinkProtocol.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -102,6 +103,12 @@ CcTelemetryController::CcTelemetryController(QObject* parent)
     (void) connect(multiVehicleManager, &MultiVehicleManager::activeVehicleChanged, this,
                    &CcTelemetryController::_setActiveVehicle);
     _setActiveVehicle(multiVehicleManager->activeVehicle());
+
+    (void) connect(MAVLinkProtocol::instance(), &MAVLinkProtocol::messageReceived, this,
+                   [this](LinkInterface* link, const mavlink_message_t& message) {
+                       Q_UNUSED(link);
+                       _mavlinkMessageReceived(message);
+                   });
 }
 
 void CcTelemetryController::_setActiveVehicle(Vehicle* vehicle)
@@ -117,8 +124,6 @@ void CcTelemetryController::_setActiveVehicle(Vehicle* vehicle)
     _resetTelemetry();
 
     if (_activeVehicle) {
-        _vehicleMessageConnection = connect(_activeVehicle, &Vehicle::mavlinkMessageReceived, this,
-                                            &CcTelemetryController::_mavlinkMessageReceived, Qt::UniqueConnection);
         _vehicleDestroyedConnection = connect(_activeVehicle, &QObject::destroyed, this, [this]() {
             _activeVehicle = nullptr;
             _resetTelemetry();
@@ -166,8 +171,8 @@ void CcTelemetryController::_processMessage(const mavlink_message_t& message)
                 {QStringLiteral("siyi_baudrate"), qulonglong{packet.siyi_baudrate}},
                 {QStringLiteral("fc_bytes_rx"), qulonglong{packet.fc_bytes_rx}},
                 {QStringLiteral("fc_bytes_tx"), qulonglong{packet.fc_bytes_tx}},
-                {QStringLiteral("fc_bitrate_kbps"), packet.fc_bitrate_kbps},
-                {QStringLiteral("link_status_flags"), packet.link_status_flags},
+                {QStringLiteral("fc_bitrate_kbps"), (packet.fc_rx_rate * 8.0f) / 1000.0f},
+                {QStringLiteral("link_status_flags"), packet.fc_status},
                 {QStringLiteral("fc_port"), fixedMavlinkString(packet.fc_port)},
                 {QStringLiteral("siyi_port"), fixedMavlinkString(packet.siyi_port)},
             };
@@ -195,7 +200,7 @@ void CcTelemetryController::_processMessage(const mavlink_message_t& message)
                 {QStringLiteral("serial_number"), fixedMavlinkString(packet.serial_number)},
                 {QStringLiteral("codec"), fixedMavlinkString(packet.codec)},
                 {QStringLiteral("encoder_mode"), fixedMavlinkString(packet.encoder_mode)},
-                {QStringLiteral("rtsp_url"), fixedMavlinkString(packet.rtsp_url)},
+                {QStringLiteral("rtsp_url"), fixedMavlinkString(packet.rtsp_url_qgc)},
             };
             emit cameraChanged();
             _markReceived(_cameraState, &CcTelemetryController::cameraStatusChanged);

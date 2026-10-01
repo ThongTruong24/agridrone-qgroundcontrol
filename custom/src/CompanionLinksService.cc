@@ -1,5 +1,7 @@
 #include "CompanionLinksService.h"
 #include "MAVLinkProtocol.h"
+#include "MultiVehicleManager.h"
+#include "LinkManager.h"
 #include "VehicleLinkManager.h"
 #include <QtCore/QDebug>
 
@@ -146,12 +148,27 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
 void CompanionLinksService::sendLinksConfig(Vehicle* vehicle, int fcBaud, int siyiBaud, const QString& fcPort, const QString& siyiPort)
 {
     if (!vehicle) {
-        qWarning() << "[CompanionLinksService] Cannot send config: vehicle is null";
-        return;
+        vehicle = MultiVehicleManager::instance()->activeVehicle();
     }
 
-    SharedLinkInterfacePtr sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    if (!sharedLink) return;
+    SharedLinkInterfacePtr sharedLink;
+    if (vehicle && vehicle->vehicleLinkManager()) {
+        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
+    }
+    if (!sharedLink) {
+        const auto links = LinkManager::instance()->links();
+        for (const auto& l : links) {
+            if (l && l->isConnected()) {
+                sharedLink = l;
+                break;
+            }
+        }
+    }
+
+    if (!sharedLink) {
+        qWarning() << "[CompanionLinksService] Cannot send config: no active link found";
+        return;
+    }
 
     mavlink_message_t msg;
     mavlink_cc_telemetry_links_t l{};
@@ -171,5 +188,9 @@ void CompanionLinksService::sendLinksConfig(Vehicle* vehicle, int fcBaud, int si
         &l
     );
 
-    vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    if (vehicle) {
+        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    } else {
+        sharedLink->sendMessageThreadSafe(msg);
+    }
 }

@@ -104,6 +104,8 @@ private:
     int _siyiStatus = 0;
     float _fcBitrateKbps = 0.0f;
     float _fcPacketDropRate = 0.0f;
+    float _siyiBitrateKbps = 0.0f;
+    float _siyiPacketDropRate = 0.0f;
     quint32 _fcBytesRx = 0;
     quint32 _fcBytesTx = 0;
     quint32 _siyiBytesRx = 0;

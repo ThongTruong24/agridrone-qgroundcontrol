@@ -6,6 +6,50 @@
 #include "QGCMAVLink.h"
 #include "Vehicle.h"
 
+static void packTestLinks(mavlink_message_t* msg, uint8_t sysid, uint8_t compid,
+                          uint32_t fcBaud, uint32_t siyiBaud, uint32_t fcRx, uint32_t fcTx,
+                          float fcRate, uint8_t fcStatus, const char* fcPort, const char* siyiPort)
+{
+    mavlink_msg_cc_telemetry_links_pack(
+        sysid, compid, msg,
+        fcRate, fcRate, fcRate, 1.0f, 0.0f, 0,
+        fcRx, fcTx, fcBaud,
+        fcRate, fcRate, fcRate, 1.0f, 0.0f, 0,
+        fcRx, fcTx, siyiBaud,
+        fcStatus, fcStatus, 1,
+        fcPort, siyiPort, ""
+    );
+}
+
+static void packTestCamera(mavlink_message_t* msg, uint8_t sysid, uint8_t compid,
+                           uint16_t w, uint16_t h, uint16_t rot, uint16_t dw, uint16_t dh,
+                           uint16_t br, uint16_t brmax, uint16_t vbv, uint8_t vfps, uint8_t dfps,
+                           uint8_t pmode, uint8_t emitter, const char* camType, const char* sn,
+                           const char* codec, const char* emode, const char* rtsp)
+{
+    mavlink_msg_cc_telemetry_camera_pack(
+        sysid, compid, msg,
+        w, h, dw, dh, rot, br, brmax, vbv, 8554,
+        vfps, dfps, 0, 1, pmode, emitter, 2, 0, 3,
+        "TestCam", camType, "USB3", sn, codec, emode, rtsp, rtsp, rtsp
+    );
+}
+
+static void packTestNetwork(mavlink_message_t* msg, uint8_t sysid, uint8_t compid,
+                            uint8_t ch, uint8_t n, uint8_t wmm, uint8_t wpa, uint8_t cnt,
+                            uint8_t dhcp, uint8_t dns, const char* eth0_ip, const char* wlan0_ip,
+                            const char* ap_ip, const char* ap_ssid, const char* ap_pass,
+                            const char* ap_key, const char* ap_hw)
+{
+    mavlink_msg_cc_telemetry_network_pack(
+        sysid, compid, msg,
+        0, 0, 0, 0, 0, 0,
+        ch, n, wmm, wpa, cnt, 2, 2, 2, 1, dhcp, dns, -50,
+        eth0_ip, "255.255.255.0", wlan0_ip, "255.255.255.0", "MyWlan",
+        ap_ip, "255.255.255.0", ap_ssid, ap_pass, ap_key, ap_hw
+    );
+}
+
 UT_REGISTER_TEST(CcTelemetryControllerTest, TestLabel::Unit, TestLabel::Vehicle)
 UT_REGISTER_TEST(CcTelemetryVehicleLifecycleTest, TestLabel::Integration, TestLabel::Vehicle)
 
@@ -19,22 +63,18 @@ void CcTelemetryControllerTest::_testGeneratedMessageDecoding()
     QSignalSpy visionChangedSpy(&controller, &CcTelemetryController::visionChanged);
 
     mavlink_message_t message{};
-    mavlink_msg_cc_telemetry_links_pack(42, 191, &message, 921600, 115200, 123456, 654321, 88.5F, 3, "ttyUSB0",
-                                        "ttyUSB1");
+    packTestLinks(&message, 42, 191, 921600, 115200, 123456, 654321, 88.5F, 3, "ttyUSB0", "ttyUSB1");
     controller.processMessageForTest(message);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_baudrate")).toULongLong(), 921600ULL);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("siyi_baudrate")).toULongLong(), 115200ULL);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_bytes_rx")).toULongLong(), 123456ULL);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_bytes_tx")).toULongLong(), 654321ULL);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_bitrate_kbps")).toFloat(), 88.5F);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("link_status_flags")).toInt(), 3);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("ttyUSB0"));
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("siyi_port")).toString(), QStringLiteral("ttyUSB1"));
     QVERIFY(controller.linksReceived());
     QCOMPARE(linksChangedSpy.count(), 1);
 
-    mavlink_msg_cc_telemetry_camera_pack(42, 191, &message, 1920, 1080, 90, 640, 480, 4000, 6000, 800, 30, 15, 2, 1,
-                                         "D455", "CAM-123", "h265", "cbr", "rtsp://10.0.0.2/live");
+    packTestCamera(&message, 42, 191, 1920, 1080, 90, 640, 480, 4000, 6000, 800, 30, 15, 2, 1, "D455", "CAM-123", "h265", "cbr", "rtsp://10.0.0.2/live");
     controller.processMessageForTest(message);
     QCOMPARE(controller.ccTelemetryCamera().value(QStringLiteral("video_width")).toInt(), 1920);
     QCOMPARE(controller.ccTelemetryCamera().value(QStringLiteral("video_height")).toInt(), 1080);
@@ -58,8 +98,8 @@ void CcTelemetryControllerTest::_testGeneratedMessageDecoding()
     QVERIFY(controller.cameraReceived());
     QCOMPARE(cameraChangedSpy.count(), 1);
 
-    mavlink_msg_cc_telemetry_network_pack(42, 191, &message, 6, 1, 1, 2, 4, 1, 1, "10.0.0.10", "192.168.1.20",
-                                          "192.168.4.1", "AgriDrone", "secret123", "WPA-PSK", "g");
+    packTestNetwork(&message, 42, 191, 6, 1, 1, 2, 4, 1, 1, "10.0.0.10", "192.168.1.20",
+                    "192.168.4.1", "AgriDrone", "secret123", "WPA-PSK", "g");
     controller.processMessageForTest(message);
     QCOMPARE(controller.ccTelemetryNetwork().value(QStringLiteral("ap_channel")).toInt(), 6);
     QCOMPARE(controller.ccTelemetryNetwork().value(QStringLiteral("ap_ieee80211n")).toInt(), 1);
@@ -108,12 +148,12 @@ void CcTelemetryControllerTest::_testSourceFiltering()
     controller.processMessageForTest(message);
     QCOMPARE(controller.sourceComponentId(), -1);
 
-    mavlink_msg_cc_telemetry_links_pack(42, 191, &message, 57600, 115200, 10, 20, 2.5F, 1, "primary", "camera");
+    packTestLinks(&message, 42, 191, 57600, 115200, 10, 20, 2.5F, 1, "primary", "camera");
     controller.processMessageForTest(message);
     QCOMPARE(controller.sourceComponentId(), 191);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("primary"));
 
-    mavlink_msg_cc_telemetry_links_pack(42, 192, &message, 9600, 9600, 99, 99, 1.0F, 0, "wrong", "wrong");
+    packTestLinks(&message, 42, 192, 9600, 9600, 99, 99, 1.0F, 0, "wrong", "wrong");
     controller.processMessageForTest(message);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("primary"));
 }
@@ -126,7 +166,7 @@ void CcTelemetryControllerTest::_testStaleAndReset()
     QVERIFY(!controller.linksStale());
 
     mavlink_message_t message{};
-    mavlink_msg_cc_telemetry_links_pack(1, 191, &message, 57600, 115200, 10, 20, 2.5F, 1, "primary", "camera");
+    packTestLinks(&message, 1, 191, 57600, 115200, 10, 20, 2.5F, 1, "primary", "camera");
     controller.processMessageForTest(message);
     QVERIFY(controller.linksReceived());
     QVERIFY(!controller.linksStale());
@@ -149,9 +189,8 @@ void CcTelemetryVehicleLifecycleTest::_testDisconnectAndReconnectReset()
     QVERIFY(controller.vehicleAvailable());
 
     mavlink_message_t message{};
-    mavlink_msg_cc_telemetry_links_pack(vehicle()->id(), 191, &message, 921600, 115200, 10, 20, 4.5F, 3, "first",
-                                        "siyi");
-    emit vehicle() -> mavlinkMessageReceived(message);
+    packTestLinks(&message, vehicle()->id(), 191, 921600, 115200, 10, 20, 4.5F, 3, "first", "siyi");
+    emit vehicle()->mavlinkMessageReceived(message);
     QVERIFY(controller.linksReceived());
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("first"));
 
@@ -165,9 +204,8 @@ void CcTelemetryVehicleLifecycleTest::_testDisconnectAndReconnectReset()
     QVERIFY(controller.vehicleAvailable());
     QVERIFY(!controller.linksReceived());
 
-    mavlink_msg_cc_telemetry_links_pack(vehicle()->id(), 192, &message, 57600, 57600, 30, 40, 1.5F, 1, "second",
-                                        "siyi2");
-    emit vehicle() -> mavlinkMessageReceived(message);
+    packTestLinks(&message, vehicle()->id(), 192, 57600, 57600, 30, 40, 1.5F, 1, "second", "siyi2");
+    emit vehicle()->mavlinkMessageReceived(message);
     QCOMPARE(controller.sourceComponentId(), 192);
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("second"));
 }

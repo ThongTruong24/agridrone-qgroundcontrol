@@ -551,34 +551,43 @@ ColumnLayout {
         target: CompanionController
 
         function onCommandAckReceived(command, result, text) {
-            if (command === 44011) { // MAV_CMD_THACO_APPLY_CONFIG
-                if (result === 0) { // MAV_RESULT_ACCEPTED
-                    root._userInteractedFc = false
-                    root._selectedFcPort = ""
-                    root._selectedFcBaud = 0
-                    root._userInteractedSiyi = false
-                    root._selectedSiyiPort = ""
-                    root._selectedSiyiBaud = 0
-                    fcPortCombo.syncToActive()
-                    fcBaudCombo.syncToActive()
-                    siyiPortCombo.syncToActive()
-                    siyiBaudCombo.syncToActive()
-                }
+            // Keep draft selection stable; do not revert immediately on ACK
+            if (command === 44011 && result !== 0) {
+                // If rejected, unlock draft so UI shows current active state
+                root._userInteractedFc = false
+                root._userInteractedSiyi = false
+                fcPortCombo.syncToActive()
+                fcBaudCombo.syncToActive()
+                siyiPortCombo.syncToActive()
+                siyiBaudCombo.syncToActive()
             }
         }
 
         function onLinksChanged() {
             if (CompanionController.hasLinksTelemetry) {
+                // Clear user draft lock ONLY when incoming telemetry matches the new selection
+                if (root._userInteractedFc && root._selectedFcPort !== "" && CompanionController.fcPort === root._selectedFcPort) {
+                    root._userInteractedFc = false
+                    root._selectedFcPort = ""
+                    root._selectedFcBaud = 0
+                }
+                if (root._userInteractedSiyi && root._selectedSiyiPort !== "" && CompanionController.siyiPort === root._selectedSiyiPort) {
+                    root._userInteractedSiyi = false
+                    root._selectedSiyiPort = ""
+                    root._selectedSiyiBaud = 0
+                }
+
                 if (!root._fcInitialized && CompanionController.fcPort !== "") {
                     root._fcInitialized = true
-                    fcPortCombo.syncToActive()
-                    fcBaudCombo.syncToActive()
                 }
                 if (!root._siyiInitialized && CompanionController.siyiPort !== "") {
                     root._siyiInitialized = true
-                    siyiPortCombo.syncToActive()
-                    siyiBaudCombo.syncToActive()
                 }
+
+                fcPortCombo.syncToActive()
+                fcBaudCombo.syncToActive()
+                siyiPortCombo.syncToActive()
+                siyiBaudCombo.syncToActive()
             }
         }
     }
