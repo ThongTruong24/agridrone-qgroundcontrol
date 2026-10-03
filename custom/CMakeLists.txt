@@ -104,6 +104,8 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionParamServiceTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionParamServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionProtocolTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionProtocolTest.h
     )
     include(QGCTest)
     add_qgc_test(CompanionControllerTest LABELS Unit Vehicle)
@@ -112,6 +114,7 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
     add_qgc_test(CompanionLinksServiceTest LABELS Unit)
     add_qgc_test(CompanionLogServiceTest LABELS Unit)
     add_qgc_test(CompanionParamServiceTest LABELS Unit)
+    add_qgc_test(CompanionProtocolTest LABELS Unit)
     add_qgc_test(AgriDroneControllerTest LABELS Unit Vehicle)
 endif()
 
@@ -121,6 +124,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ITelemetryHandler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.cc
@@ -152,6 +157,7 @@ set(CUSTOM_LIBRARIES
 set(CUSTOM_INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MAVLink
     CACHE INTERNAL "" FORCE

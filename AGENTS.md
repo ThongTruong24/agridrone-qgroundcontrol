@@ -2,6 +2,8 @@
 
 Instructions for AI coding agents (Codex, Claude Code, etc.) working on QGroundControl.
 
+> **Context7 Rule**: Always use Context7 when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
+
 ## Quick References
 
 - [CODING_STYLE.md](CODING_STYLE.md) — Naming, formatting, C++20 features, QML style, logging

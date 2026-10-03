@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Always use Context7 when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 @AGENTS.md
@@ -26,7 +28,7 @@ Tests are compiled into the QGroundControl binary (needs `QGC_BUILD_TESTING`). S
 `custom/` is picked up automatically by the top-level CMake (QGC's custom-build mechanism). `custom/CMakeLists.txt`:
 
 - Builds the `AgriDroneModule` static lib + QML module `Custom.AgriDrone` (resource prefix `/qml`). **Every new `.qml` file must be added to `AGRIDRONE_QML_FILES`**; QML singletons also need `QT_QML_SINGLETON_TYPE` set (see `CompanionUiAdapter.qml`).
-- **Every new C++ source must be added to `CUSTOM_SOURCES`.** Test sources go in `AGRIDRONE_TEST_SOURCES`, and each test class needs both `UT_REGISTER_TEST(...)` in the `.cc` and an `add_qgc_test(Name LABELS ...)` line. (`custom/test/CcTelemetryControllerTest.*` exists but is not currently registered in CMake.)
+- **Every new C++ source must be added to `CUSTOM_SOURCES`.** Test sources go in `AGRIDRONE_TEST_SOURCES`, and each test class needs both `UT_REGISTER_TEST(...)` in the `.cc` and an `add_qgc_test(Name LABELS ...)` line.
 - Sets `CUSTOMCLASS=CustomPlugin`, so `custom/src/CustomPlugin` replaces `QGCCorePlugin`.
 
 `custom/cmake/CustomOverrides.cmake` runs before the main configure. It:
@@ -46,8 +48,7 @@ The companion computer (camera, vision, network, links, mission) talks to QGC ov
 - `CompanionController` is a `QML_SINGLETON`, the single QML-facing façade with a large `Q_PROPERTY` surface. It tracks `MultiVehicleManager::activeVehicleChanged` (guarded `_activeVehicle`, which falls back to `activeVehicle()`), listens to `MAVLinkProtocol::messageReceived`, runs a telemetry watchdog, and drives config apply/confirm flows with timeouts and retries (`_configTimer`, `_confirmTimer`, COMMAND_ACK filtering).
 - `CompanionMavlinkDispatcher` fans incoming messages out to `ITelemetryHandler` implementations (`handleMavlinkMessage` / `resetState`). New message families should become a handler registered with the dispatcher rather than more `switch` cases in the controller.
 - `CompanionLinksService` (UART/link config, an `ITelemetryHandler`) and `CompanionLogService` (MAVLink/STATUSTEXT log feed) are owned by the controller and re-exposed through its signals.
-- `CcTelemetryController` decodes the `CC_TELEMETRY_{LINKS,CAMERA,NETWORK,VISION}` messages for the `qml/CcTelemetry/` page.
 - `AgriDroneController` backs the AgriDrone Fly View button/drop panel and settings.
-- QML: `CompanionSettings.qml` hosts the tabbed `Companion*Tab.qml` panels. `CompanionUiAdapter.qml` (singleton) and `CcTelemetry/CcTelemetryAdapter.qml` sit between views and C++ state, e.g. holding draft values so comboboxes don't jump while an apply is in flight.
+- QML: the "Companion Computer" settings page is generated from `src/AppSettings/pages/Companion.SettingsUI.json`, whose groups render the tabbed `Companion*Tab.qml` panels. `CompanionUiAdapter.qml` (singleton) sits between views and C++ state, e.g. holding draft values so comboboxes don't jump while an apply is in flight.
 
 Tests: `custom/test/CompanionControllerTest` holds both `CompanionControllerTest` (Unit; uses `friend` access) and `CompanionVehicleLifecycleTest` (Integration, `VehicleTestManualConnect`, which covers disconnect/reconnect reset, UART ACK retry, and the QML draft/save guard).
