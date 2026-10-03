@@ -40,7 +40,7 @@ ColumnLayout {
                 width:  ScreenTools.defaultFontPixelHeight * 0.75
                 height: width
                 radius: width / 2
-                color:  CompanionController.vehicleConnected ? "#2ECC71" : "#7F8C8D"
+                color:  CompanionController.hasSystemTelemetry ? qgcPal.colorGreen : (CompanionController.vehicleConnected ? qgcPal.colorOrange : qgcPal.colorRed)
             }
 
             QGCLabel {
@@ -50,16 +50,17 @@ ColumnLayout {
                          : qsTr("MAVLink Connected — Waiting for System Telemetry..."))
                       : qsTr("No MAVLink Connection")
                 font.bold: true
-                color: CompanionController.vehicleConnected ? (CompanionController.hasSystemTelemetry ? qgcPal.text : qgcPal.colorOrange) : qgcPal.text
+                color: qgcPal.text
             }
 
             Item { Layout.fillWidth: true }
 
             QGCLabel {
-                text: CompanionController.lastToastMsg
-                color: CompanionController.lastToastIsError ? "#E74C3C" : "#2ECC71"
+                text: CompanionController.hasSystemTelemetry
+                      ? qsTr("ONLINE")
+                      : (CompanionController.vehicleConnected ? qsTr("STANDBY") : qsTr("OFFLINE"))
+                color: CompanionController.hasSystemTelemetry ? qgcPal.colorGreen : (CompanionController.vehicleConnected ? qgcPal.colorOrange : qgcPal.colorRed)
                 font.bold: true
-                visible: CompanionController.lastToastMsg !== ""
             }
         }
 
@@ -82,7 +83,7 @@ ColumnLayout {
                               : "--"
                         font.bold: true
                         font.pointSize: ScreenTools.mediumFontPointSize
-                        color: CompanionController.hasSystemTelemetry && CompanionController.cpuUsage > 80 ? "#E74C3C" : qgcPal.text
+                        color: CompanionController.hasSystemTelemetry && CompanionController.cpuUsage > 80 ? qgcPal.colorRed : qgcPal.text
                     }
                 }
             }
@@ -99,7 +100,7 @@ ColumnLayout {
                               : "--"
                         font.bold: true
                         font.pointSize: ScreenTools.mediumFontPointSize
-                        color: CompanionController.hasSystemTelemetry && CompanionController.ramUsage > 85 ? "#E74C3C" : qgcPal.text
+                        color: CompanionController.hasSystemTelemetry && CompanionController.ramUsage > 85 ? qgcPal.colorRed : qgcPal.text
                     }
                 }
             }
@@ -116,7 +117,7 @@ ColumnLayout {
                               : "--"
                         font.bold: true
                         font.pointSize: ScreenTools.mediumFontPointSize
-                        color: CompanionController.hasSystemTelemetry && CompanionController.cpuTemp > 75 ? "#E74C3C" : (CompanionController.hasSystemTelemetry && CompanionController.cpuTemp > 65 ? "#F39C12" : qgcPal.text)
+                        color: CompanionController.hasSystemTelemetry && CompanionController.cpuTemp > 75 ? qgcPal.colorRed : (CompanionController.hasSystemTelemetry && CompanionController.cpuTemp > 65 ? qgcPal.colorOrange : qgcPal.text)
                     }
                 }
             }
@@ -260,7 +261,7 @@ ColumnLayout {
                         font.family: "Monospace"
                         font.bold: true
                         font.pointSize: ScreenTools.smallFontPointSize * 0.9
-                        color: model.dir === "TX" ? "#3498DB" : (model.dir === "RX" ? "#2ECC71" : "#F39C12")
+                        color: model.dir === "TX" ? qgcPal.buttonHighlight : (model.dir === "RX" ? qgcPal.colorGreen : qgcPal.colorOrange)
                     }
 
                     QGCLabel {

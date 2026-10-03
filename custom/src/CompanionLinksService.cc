@@ -174,6 +174,25 @@ void CompanionLinksService::sendLinksConfig(Vehicle* vehicle, int fcBaud, int si
     mavlink_cc_telemetry_links_t l{};
     l.fc_baudrate = static_cast<uint32_t>(fcBaud);
     l.siyi_baudrate = static_cast<uint32_t>(siyiBaud);
+    l.fc_bytes_rx = _fcBytesRx;
+    l.fc_bytes_tx = _fcBytesTx;
+    l.fc_tx_rate = _fcTxRate;
+    l.fc_rx_rate = _fcRxRate;
+    l.fc_tx_rate_max = _fcTxRateMax;
+    l.fc_tx_rate_multi = _fcTxRateMulti;
+    l.fc_rx_loss = _fcRxLoss;
+    l.fc_tx_err = _fcTxErr;
+    l.fc_status = static_cast<uint8_t>(_fcStatus);
+    l.siyi_status = static_cast<uint8_t>(_siyiStatus);
+    l.siyi_bytes_rx = _siyiBytesRx;
+    l.siyi_bytes_tx = _siyiBytesTx;
+    l.siyi_tx_rate = _siyiTxRate;
+    l.siyi_rx_rate = _siyiRxRate;
+    l.siyi_tx_rate_max = _siyiTxRateMax;
+    l.siyi_tx_rate_multi = _siyiTxRateMulti;
+    l.siyi_rx_loss = _siyiRxLoss;
+    l.siyi_tx_err = _siyiTxErr;
+    l.transport_type = 1;
 
     QByteArray fcBytes = fcPort.toUtf8();
     strncpy(l.fc_port, fcBytes.constData(), sizeof(l.fc_port) - 1);

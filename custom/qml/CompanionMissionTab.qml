@@ -30,7 +30,7 @@ ColumnLayout {
                     text: CompanionController.hasMissionTelemetry ? qsTr("ACTIVE") : "--"
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
-                    color: CompanionController.hasMissionTelemetry ? "#2ECC71" : qgcPal.text
+                    color: CompanionController.hasMissionTelemetry ? qgcPal.colorGreen : qgcPal.text
                 }
             }
 

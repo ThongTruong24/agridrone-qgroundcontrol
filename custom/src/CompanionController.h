@@ -12,6 +12,7 @@
 
 #include "CompanionLogService.h"
 #include "CompanionLinksService.h"
+#include "CompanionParamService.h"
 #include "CompanionMavlinkDispatcher.h"
 
 /**
@@ -26,6 +27,12 @@ class CompanionController : public QObject
 
     // Vehicle status
     Q_PROPERTY(bool vehicleConnected READ vehicleConnected NOTIFY vehicleConnectedChanged)
+
+    // Extended Parameters (CompID 191)
+    Q_PROPERTY(QVariantList ccParameters READ ccParameters NOTIFY ccParametersChanged)
+    Q_PROPERTY(bool ccParametersLoading READ ccParametersLoading NOTIFY ccParametersLoadingChanged)
+    Q_PROPERTY(int ccModifiedParamCount READ ccModifiedParamCount NOTIFY ccModifiedParamCountChanged)
+    Q_PROPERTY(QStringList ccParameterGroups READ ccParameterGroups NOTIFY ccParameterGroupsChanged)
 
     // Telemetry Received Flags
     Q_PROPERTY(bool hasCameraTelemetry READ hasCameraTelemetry NOTIFY cameraChanged)
@@ -143,6 +150,9 @@ class CompanionController : public QObject
     Q_PROPERTY(QString transportProtocol READ transportProtocol NOTIFY linksChanged)
     Q_PROPERTY(QStringList availablePorts READ availablePorts NOTIFY availablePortsChanged)
     Q_PROPERTY(QString configStatus READ configStatus NOTIFY configStatusChanged)
+    Q_PROPERTY(int vehicleEpoch READ vehicleEpoch NOTIFY vehicleEpochChanged)
+    Q_PROPERTY(bool vehicleAvailable READ vehicleAvailable NOTIFY vehicleAvailableChanged)
+    Q_PROPERTY(QString configMessage READ configMessage NOTIFY configStatusChanged)
 
     // System Properties (from CC_TELEMETRY_SYSTEM 42014)
     Q_PROPERTY(int cpuUsage READ cpuUsage NOTIFY systemChanged)
@@ -239,6 +249,12 @@ public:
     quint32 lastTriggerId() const { return _lastTriggerId; }
     quint32 lastTriggerTimeBootMs() const { return _lastTriggerTimeBootMs; }
 
+    // Extended Parameters Getters
+    QVariantList ccParameters() const { return _paramService ? _paramService->paramList() : QVariantList(); }
+    bool ccParametersLoading() const { return _paramService ? _paramService->isLoading() : false; }
+    int ccModifiedParamCount() const { return _paramService ? _paramService->modifiedCount() : 0; }
+    QStringList ccParameterGroups() const { return _paramService ? _paramService->groups() : QStringList(); }
+
     // Links Getters (delegated to CompanionLinksService)
     int fcBaud() const { return _linksService ? _linksService->fcBaud() : 0; }
     int siyiBaud() const { return _linksService ? _linksService->siyiBaud() : 0; }
@@ -303,6 +319,35 @@ public:
     Q_INVOKABLE void restoreDefaultConfig(int subsystemId = 0);
     Q_INVOKABLE void sendCliCommand(const QString& cmdText);
 
+    // Extended Parameters QML Invokables
+    Q_INVOKABLE void requestCcParameters() {
+        if (_paramService) _paramService->requestParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
+    }
+    Q_INVOKABLE void stageCcParameter(const QString& name, const QVariant& value) {
+        if (_paramService) _paramService->stageParameter(name, value);
+    }
+    Q_INVOKABLE void resetCcParameter(const QString& name) {
+        if (_paramService) _paramService->resetParameter(name);
+    }
+    Q_INVOKABLE void resetCcParameterToDefault(const QString& name) {
+        if (_paramService) _paramService->resetToDefault(name);
+    }
+    Q_INVOKABLE bool exportCcParameters(const QString& filePath) {
+        return _paramService ? _paramService->exportParameters(filePath) : false;
+    }
+    Q_INVOKABLE bool importCcParameters(const QString& filePath) {
+        return _paramService ? _paramService->importParameters(filePath) : false;
+    }
+    Q_INVOKABLE void resetAllModifiedCcParameters() {
+        if (_paramService) _paramService->resetAllModified();
+    }
+    Q_INVOKABLE void saveModifiedCcParameters() {
+        if (_paramService) _paramService->saveModifiedParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
+    }
+    Q_INVOKABLE void setSingleCcParameter(const QString& name, const QVariant& value) {
+        if (_paramService) _paramService->sendSingleParamSet(_activeVehicle ? _activeVehicle.data() : nullptr, name, value);
+    }
+
     // Audit Log (delegated to CompanionLogService)
     Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;
     Q_INVOKABLE void clearLogHistory(const QString& category = QString());
@@ -349,7 +394,13 @@ signals:
     void networkChanged();
     void linksChanged();
     void availablePortsChanged();
+    void ccParametersChanged();
+    void ccParametersLoadingChanged();
+    void ccModifiedParamCountChanged();
+    void ccParameterGroupsChanged();
     void configStatusChanged();
+    void vehicleEpochChanged();
+    void vehicleAvailableChanged();
     void systemChanged();
     void missionChanged();
     void toastChanged();
@@ -365,10 +416,12 @@ private:
     void _logMavlink(const QString& category, const QString& direction, const QString& message, int severity);
     void _showToast(const QString& msg, bool isError);
     void _clearTelemetryState();
+    void _checkTelemetryConfirmation();
 
     // SOLID Services
     CompanionLogService* _logService = nullptr;
     CompanionLinksService* _linksService = nullptr;
+    CompanionParamService* _paramService = nullptr;
     CompanionMavlinkDispatcher* _dispatcher = nullptr;
 
     QPointer<Vehicle> _activeVehicle;
@@ -478,6 +531,8 @@ private:
 
     // Config message (error text)
     QString _configMessage;
+    quint16 _pendingCommand = 0;
+    bool _waitingTelemetry = false;
 
     // Config state timers
     QTimer* _configTimer = nullptr;

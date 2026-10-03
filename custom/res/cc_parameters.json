@@ -1,0 +1,266 @@
+{
+    "version": 1,
+    "componentId": 191,
+    "description": "THACO Drone Companion Computer Parameter Registry Template",
+    "groups": [
+        {
+            "id": "Telemetry",
+            "name": "Telemetry & Router Links",
+            "description": "Serial ports and baudrates for Flight Controller and SIYI Radio links"
+        },
+        {
+            "id": "Camera",
+            "name": "Camera & Video Streaming",
+            "description": "Resolution, framerate, bitrate and encoding format for onboard video stream"
+        },
+        {
+            "id": "Vision",
+            "name": "Vision AI & Tracking",
+            "description": "AI model, detection confidence threshold and video feed source"
+        },
+        {
+            "id": "Network",
+            "name": "Networking & Hotspot",
+            "description": "Access point SSID, password, Wi-Fi channel, and Ethernet static IP address"
+        }
+    ],
+    "parameters": [
+        {
+            "name": "CC_FC_PORT",
+            "group": "Telemetry",
+            "label": "FC Serial Port",
+            "type": "string",
+            "default": "/dev/ttyTHS1",
+            "description": "UART device connected to Flight Controller Telem1/Telem2",
+            "reboot": true
+        },
+        {
+            "name": "CC_FC_BAUD",
+            "group": "Telemetry",
+            "label": "FC Baudrate",
+            "type": "uint32",
+            "default": 921600,
+            "units": "bps",
+            "options": [
+                "57600",
+                "115200",
+                "230400",
+                "460800",
+                "921600",
+                "1500000"
+            ],
+            "description": "Baudrate for MAVLink telemetry connection to FC",
+            "reboot": true
+        },
+        {
+            "name": "CC_SIYI_PORT",
+            "group": "Telemetry",
+            "label": "SIYI Serial Port",
+            "type": "string",
+            "default": "/dev/ttyUSB0",
+            "description": "UART device connected to SIYI Air Unit Telemetry Port",
+            "reboot": true
+        },
+        {
+            "name": "CC_SIYI_BAUD",
+            "group": "Telemetry",
+            "label": "SIYI Baudrate",
+            "type": "uint32",
+            "default": 115200,
+            "units": "bps",
+            "options": [
+                "57600",
+                "115200",
+                "230400",
+                "460800",
+                "921600"
+            ],
+            "description": "Baudrate for telemetry transmission over SIYI radio link",
+            "reboot": true
+        },
+        {
+            "name": "CC_CAM_W",
+            "group": "Camera",
+            "label": "Camera Width",
+            "type": "uint32",
+            "default": 1920,
+            "units": "px",
+            "min": 640,
+            "max": 3840,
+            "options": [
+                "640",
+                "1280",
+                "1920",
+                "2560",
+                "3840"
+            ],
+            "description": "Horizontal video resolution in pixels",
+            "reboot": false
+        },
+        {
+            "name": "CC_CAM_H",
+            "group": "Camera",
+            "label": "Camera Height",
+            "type": "uint32",
+            "default": 1080,
+            "units": "px",
+            "min": 480,
+            "max": 2160,
+            "options": [
+                "480",
+                "720",
+                "1080",
+                "1440",
+                "2160"
+            ],
+            "description": "Vertical video resolution in pixels",
+            "reboot": false
+        },
+        {
+            "name": "CC_CAM_FPS",
+            "group": "Camera",
+            "label": "Camera Framerate",
+            "type": "uint32",
+            "default": 30,
+            "units": "fps",
+            "min": 10,
+            "max": 60,
+            "options": [
+                "15",
+                "20",
+                "24",
+                "25",
+                "30",
+                "60"
+            ],
+            "description": "Video capture frames per second",
+            "reboot": false
+        },
+        {
+            "name": "CC_CAM_BR",
+            "group": "Camera",
+            "label": "Camera Bitrate",
+            "type": "uint32",
+            "default": 4000,
+            "units": "kbps",
+            "min": 500,
+            "max": 20000,
+            "options": [
+                "1000",
+                "2000",
+                "4000",
+                "6000",
+                "8000",
+                "12000"
+            ],
+            "description": "Target video encoding bitrate in kilobits per second",
+            "reboot": false
+        },
+        {
+            "name": "CC_CAM_CODEC",
+            "group": "Camera",
+            "label": "Video Codec",
+            "type": "string",
+            "default": "H264",
+            "options": [
+                "H264",
+                "H265",
+                "MJPEG"
+            ],
+            "description": "Compression codec for video stream",
+            "reboot": false
+        },
+        {
+            "name": "CC_VIS_MODEL",
+            "group": "Vision",
+            "label": "AI Model File",
+            "type": "string",
+            "default": "yolov8n.onnx",
+            "options": [
+                "yolov8n.onnx",
+                "yolov8s.onnx",
+                "crop_disease_v1.onnx",
+                "spraying_target_v2.onnx"
+            ],
+            "description": "Neural network model loaded for onboard object detection",
+            "reboot": false
+        },
+        {
+            "name": "CC_VIS_CONF",
+            "group": "Vision",
+            "label": "Confidence Threshold",
+            "type": "real32",
+            "default": 0.5,
+            "min": 0.05,
+            "max": 1.0,
+            "description": "Minimum probability required to accept a detection (0.05 - 1.00)",
+            "reboot": false
+        },
+        {
+            "name": "CC_VIS_SRC",
+            "group": "Vision",
+            "label": "Vision Input Source",
+            "type": "string",
+            "default": "camera",
+            "options": [
+                "camera",
+                "rtsp",
+                "file",
+                "test"
+            ],
+            "description": "Input frame source for the AI computer vision pipeline",
+            "reboot": false
+        },
+        {
+            "name": "CC_AP_SSID",
+            "group": "Network",
+            "label": "Wi-Fi AP SSID",
+            "type": "string",
+            "default": "THACO-DRONE-AP",
+            "description": "SSID broadcast name of the drone Wi-Fi hotspot",
+            "reboot": true
+        },
+        {
+            "name": "CC_AP_PASS",
+            "group": "Network",
+            "label": "Wi-Fi AP Password",
+            "type": "string",
+            "default": "thaco123456",
+            "description": "WPA2 security passphrase for drone Wi-Fi network (minimum 8 characters)",
+            "reboot": true
+        },
+        {
+            "name": "CC_AP_CH",
+            "group": "Network",
+            "label": "Wi-Fi Channel",
+            "type": "uint32",
+            "default": 6,
+            "min": 1,
+            "max": 14,
+            "options": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                "10",
+                "11"
+            ],
+            "description": "Wi-Fi 2.4GHz operating channel",
+            "reboot": true
+        },
+        {
+            "name": "CC_ETH0_IP",
+            "group": "Network",
+            "label": "Ethernet IP Address",
+            "type": "string",
+            "default": "192.168.144.20/24",
+            "description": "Static IP with CIDR subnet for Ethernet eth0 port",
+            "reboot": true
+        }
+    ]
+}

@@ -111,7 +111,7 @@ ColumnLayout {
                     text: CompanionController.hasCameraTelemetry ? qsTr("ONLINE") : "--"
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
-                    color: CompanionController.hasCameraTelemetry ? "#2ECC71" : qgcPal.text
+                    color: CompanionController.hasCameraTelemetry ? qgcPal.colorGreen : qgcPal.text
                 }
             }
 

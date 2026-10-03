@@ -84,7 +84,16 @@ public:
 
     QString transportProtocol() const { return _transportProtocol; }
 
-    QStringList availablePorts() const { return _availablePorts; }
+    QStringList availablePorts() const {
+        QStringList ports = _availablePorts;
+        if (!_fcPort.isEmpty() && !ports.contains(_fcPort)) {
+            ports.append(_fcPort);
+        }
+        if (!_siyiPort.isEmpty() && !ports.contains(_siyiPort)) {
+            ports.append(_siyiPort);
+        }
+        return ports;
+    }
 
     void sendLinksConfig(Vehicle* vehicle, int fcBaud, int siyiBaud, const QString& fcPort, const QString& siyiPort);
 

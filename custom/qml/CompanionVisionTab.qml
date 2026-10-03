@@ -94,7 +94,7 @@ ColumnLayout {
                           : "--"
                     font.bold: true
                     font.pointSize: ScreenTools.mediumFontPointSize
-                    color: CompanionController.hasVisionTelemetry ? "#2ECC71" : qgcPal.text
+                    color: CompanionController.hasVisionTelemetry ? qgcPal.colorGreen : qgcPal.text
                 }
             }
 

@@ -11,18 +11,19 @@ import QGC
 /// Companion Computer Settings — 5-tab panel integrated into QGC AppSettings.
 /// Tabs: Telemetry | Networking | Camera | Vision | Mission
 Item {
+    QGCPalette { id: qgcPal }
     id: root
     anchors.fill: parent
 
     // —— THACO AgriDrone colour tokens —————————————————————————————
-    readonly property color _accentBlue:  "#1E8BC3"
-    readonly property color _accentGreen: "#3FB950"
-    readonly property color _bgDark:      "#0D1117"
-    readonly property color _bgCard:      "#161B22"
-    readonly property color _borderColor: "#30363D"
-    readonly property color _textNormal:  "#E6EDF3"
-    readonly property color _textMuted:   "#8B949E"
-    readonly property color _textError:   "#FF6B6B"
+    readonly property color _accentBlue:  qgcPal.buttonHighlight
+    readonly property color _accentGreen: qgcPal.colorGreen
+    readonly property color _bgDark:      qgcPal.window
+    readonly property color _bgCard:      qgcPal.windowShade
+    readonly property color _borderColor: qgcPal.windowShadeDark
+    readonly property color _textNormal:  qgcPal.text
+    readonly property color _textMuted:   qgcPal.text
+    readonly property color _textError:   qgcPal.colorRed
 
     // Persisted connection settings
     property int    _companionPort: 8080
@@ -132,7 +133,8 @@ Item {
                         { icon: "qrc:/InstrumentValueIcons/network.svg",      label: qsTr("Networking") },
                         { icon: "qrc:/InstrumentValueIcons/video-camera.svg",  label: qsTr("Camera") },
                         { icon: "qrc:/InstrumentValueIcons/view-show.svg",     label: qsTr("Vision") },
-                        { icon: "qrc:/InstrumentValueIcons/target.svg",        label: qsTr("Mission") }
+                        { icon: "qrc:/InstrumentValueIcons/target.svg",        label: qsTr("Mission") },
+                        { icon: "qrc:/InstrumentValueIcons/tuning.svg",        label: qsTr("Parameters") }
                     ]
 
                     delegate: TabButton {
@@ -140,7 +142,7 @@ Item {
                         required property var modelData
                         required property int index
 
-                        width: tabBar.width / 5
+                        width: Math.max(1, Math.floor(root.width / 6))
                         background: Rectangle {
                             color:  tabBar.currentIndex === tabBtn.index
                                     ? Qt.rgba(30/255, 139/255, 195/255, 0.18)
@@ -183,11 +185,12 @@ Item {
                 Layout.fillHeight: true
 
 
-                CompanionTelemetryTab  { anchors.fill: parent; visible: tabBar.currentIndex === 0 }
+                CompanionTelemetryTab  { objectName: "companionTelemetryTab"; anchors.fill: parent; visible: tabBar.currentIndex === 0 }
                 CompanionNetworkingTab { anchors.fill: parent; visible: tabBar.currentIndex === 1 }
                 CompanionCameraTab     { anchors.fill: parent; visible: tabBar.currentIndex === 2 }
                 CompanionVisionTab     { anchors.fill: parent; visible: tabBar.currentIndex === 3 }
                 CompanionMissionTab    { anchors.fill: parent; visible: tabBar.currentIndex === 4 }
+                CompanionParametersTab { anchors.fill: parent; visible: tabBar.currentIndex === 5 }
             }
         }
     }

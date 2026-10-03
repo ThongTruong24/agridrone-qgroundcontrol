@@ -16,10 +16,12 @@ CompanionController::CompanionController(QObject* parent)
     // SOLID: Decoupled services
     _logService = new CompanionLogService(this);
     _linksService = new CompanionLinksService(this);
+    _paramService = new CompanionParamService(this);
     _dispatcher = new CompanionMavlinkDispatcher(this);
 
     // Register handlers to dispatcher (SOLID: Open/Closed & Dependency Inversion)
     _dispatcher->registerHandler(_linksService);
+    _dispatcher->registerHandler(_paramService);
 
     // Connect service signals to facade
     connect(_linksService, &CompanionLinksService::linksChanged, this, [this]() {
@@ -27,6 +29,15 @@ CompanionController::CompanionController(QObject* parent)
         emit vehicleConnectedChanged();
     });
     connect(_linksService, &CompanionLinksService::availablePortsChanged, this, &CompanionController::availablePortsChanged);
+    connect(_paramService, &CompanionParamService::paramListChanged, this, &CompanionController::ccParametersChanged);
+    connect(_paramService, &CompanionParamService::isLoadingChanged, this, &CompanionController::ccParametersLoadingChanged);
+    connect(_paramService, &CompanionParamService::modifiedCountChanged, this, &CompanionController::ccModifiedParamCountChanged);
+    connect(_paramService, &CompanionParamService::groupsChanged, this, &CompanionController::ccParameterGroupsChanged);
+    connect(_paramService, &CompanionParamService::parameterSaved, this, [this](const QString& name, bool success, const QString& msg) {
+        Q_UNUSED(name);
+        _showToast(msg, !success);
+    });
+    connect(_paramService, &CompanionParamService::logMessage, _logService, &CompanionLogService::logMavlink);
     connect(_linksService, &CompanionLinksService::logMessage, _logService, &CompanionLogService::logMavlink);
     connect(_logService, &CompanionLogService::logEntriesChanged, this, &CompanionController::logEntriesChanged);
     connect(_logService, &CompanionLogService::logMessageAdded, this, &CompanionController::mavlinkLogMessage);
@@ -160,13 +171,17 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
         _sourceSystemId    = -1;
         _sourceComponentId = -1;
         _vehicleEpoch++;
+        emit vehicleEpochChanged();
     }
 
     _activeVehicle = vehicle;
     emit vehicleConnectedChanged();
+    emit vehicleAvailableChanged();
 
     if (_activeVehicle) {
-        qDebug() << "CompanionController connected to Vehicle ID:" << _activeVehicle->id();
+        connect(_activeVehicle, &Vehicle::mavlinkMessageReceived, this,
+                &CompanionController::_onMavlinkMessageReceived, Qt::UniqueConnection);
+        // connected
     }
 }
 
@@ -194,6 +209,15 @@ void CompanionController::_showToast(const QString& msg, bool isError)
     _lastToastMsg = msg;
     _lastToastIsError = isError;
     emit toastChanged();
+
+    // Auto-clear toast after 4s so it never stays stuck as a permanent status
+    QTimer::singleShot(4000, this, [this, msg]() {
+        if (_lastToastMsg == msg) {
+            _lastToastMsg.clear();
+            _lastToastIsError = false;
+            emit toastChanged();
+        }
+    });
 }
 
 void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& message)
@@ -205,27 +229,25 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         }
     }
 
-    if (_telemetryWatchdog) {
-        _telemetryWatchdog->start();
-    }
-
-    // Track source system/component from CC telemetry messages (42010-42014, 32000)
-    constexpr uint16_t CC_MSG_IDS[] = {42010, 42011, 42012, 42013, 42014, 32000};
-    for (auto id : CC_MSG_IDS) {
-        if (message.msgid == id && message.compid == 191) {
-            _sourceSystemId    = message.sysid;
-            _sourceComponentId = message.compid;
-            break;
-        }
-    }
-
-    // Dispatch to registered handlers first (Links, etc.)
-    if (_dispatcher && _dispatcher->dispatchMessage(message)) {
+    // Require active vehicle match if active vehicle is known
+    if (_activeVehicle && message.sysid != _activeVehicle->id()) {
         return;
     }
 
-    switch (message.msgid) {
-    case 253: { // MAVLINK_MSG_ID_STATUSTEXT
+    if (message.msgid == 32000) { // MAVLINK_MSG_ID_THACO_EXTERNAL_XYZ_TRIGGER
+        mavlink_thaco_external_xyz_trigger_t trigger{};
+        mavlink_msg_thaco_external_xyz_trigger_decode(&message, &trigger);
+        _lastTriggerId = trigger.trigger_id;
+        _lastTriggerTimeBootMs = trigger.time_boot_ms;
+        _hasMissionTelemetry = true;
+        emit missionChanged();
+        _logMavlink(QStringLiteral("MISSION"), QStringLiteral("RX"),
+                    QStringLiteral("MISSION: XYZ trigger %1 at %2 ms").arg(trigger.trigger_id).arg(trigger.time_boot_ms), 6);
+        return;
+    }
+
+    if (message.msgid == 253) { // MAVLINK_MSG_ID_STATUSTEXT
+        if (message.compid != kCompanionCompId) return;
         mavlink_statustext_t st;
         mavlink_msg_statustext_decode(&message, &st);
         QString text = QString::fromUtf8(st.text, qstrnlen(st.text, sizeof(st.text))).trimmed();
@@ -249,26 +271,91 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
             }
             _logMavlink(category, QStringLiteral("RX"), text, st.severity);
         }
-        break;
+        return;
     }
 
-    case 77: { // MAVLINK_MSG_ID_COMMAND_ACK
+    if (message.msgid == 77) { // MAVLINK_MSG_ID_COMMAND_ACK
+        if (message.compid != kCompanionCompId) return;
         mavlink_command_ack_t ack;
         mavlink_msg_command_ack_decode(&message, &ack);
-        if (ack.command == 44011) { // MAV_CMD_THACO_APPLY_CONFIG
-            _configStatus = "IDLE";
+        if (ack.target_system != 0 && ack.target_system != MAVLinkProtocol::instance()->getSystemId()) return;
+        if (ack.target_component != 0 && ack.target_component != MAVLinkProtocol::getComponentId()) return;
+        if (_pendingCommand != 0 && ack.command != _pendingCommand) return;
+
+        if (ack.result == MAV_RESULT_IN_PROGRESS) {
+            _configStatus = QStringLiteral("Applying");
             emit configStatusChanged();
-            QString statusMsg = (ack.result == MAV_RESULT_ACCEPTED) ? "SUCCESS" : QString("FAILED (%1)").arg(ack.result);
-            QString logTxt = QString("[RX ACK] APPLY_CONFIG -> %1").arg(statusMsg);
-            QString cat = _lastAppliedCategory.isEmpty() ? "FC" : _lastAppliedCategory;
-            _logMavlink(cat, "RX", logTxt, ack.result == MAV_RESULT_ACCEPTED ? 6 : 3);
-            _showToast(QString("Apply Config: %1").arg(statusMsg), ack.result != MAV_RESULT_ACCEPTED);
+            return;
         }
+
+        const quint16 completedCommand = _pendingCommand;
+        _pendingCommand = 0;
+        if (_configTimer) _configTimer->stop();
+
         emit commandAckReceived(ack.command, ack.result, QString("ACK command %1 result %2").arg(ack.command).arg(ack.result));
-        break;
+
+        if (ack.result == MAV_RESULT_ACCEPTED) {
+            if (completedCommand == 44011) {
+                _waitingTelemetry = true;
+                _configStatus = QStringLiteral("WaitingTelemetry");
+                _configMessage = QStringLiteral("ACK accepted; waiting for UART telemetry");
+                emit configStatusChanged();
+                if (!_confirmTimer) {
+                    _confirmTimer = new QTimer(this);
+                    _confirmTimer->setSingleShot(true);
+                    connect(_confirmTimer, &QTimer::timeout, this, &CompanionController::_confirmationTimedOut);
+                }
+                _confirmTimer->start(6000);
+            } else {
+                _configStatus = QStringLiteral("Success");
+                _configMessage = QStringLiteral("Companion saved UART defaults");
+                emit configStatusChanged();
+            }
+            QString logTxt = QString("[RX ACK] Command %1 accepted").arg(completedCommand);
+            _logMavlink(QStringLiteral("UART"), QStringLiteral("RX"), logTxt, 6);
+        } else {
+            _configStatus = QStringLiteral("Failed");
+            _configMessage = QStringLiteral("Companion rejected command (%1)").arg(ack.result);
+            emit configStatusChanged();
+            QString logTxt = QString("[RX ACK] Command %1 denied (%2)").arg(completedCommand).arg(ack.result);
+            _logMavlink(QStringLiteral("UART"), QStringLiteral("RX"), logTxt, 3);
+        }
+        return;
     }
 
-    case 42011: { // CC_TELEMETRY_CAMERA
+    // Telemetry messages (42010..42014): must come from Companion Computer (compid 191)
+    if (message.compid != kCompanionCompId) {
+        return;
+    }
+
+    if (_sourceComponentId < 0) {
+        _sourceSystemId    = message.sysid;
+        _sourceComponentId = message.compid;
+    } else if (message.sysid != _sourceSystemId || message.compid != _sourceComponentId) {
+        return;
+    }
+
+    if (_telemetryWatchdog) {
+        _telemetryWatchdog->start();
+    }
+
+    // Telemetry stream active -> dismiss stale offline/timeout toast immediately
+    if (_lastToastMsg.contains(QStringLiteral("timed out")) || _lastToastMsg.contains(QStringLiteral("OFFLINE"))) {
+        _lastToastMsg.clear();
+        _lastToastIsError = false;
+        emit toastChanged();
+    }
+
+    // Dispatch to registered handlers first (Links, etc.)
+    if (_dispatcher && _dispatcher->dispatchMessage(message)) {
+        if (message.msgid == 42010) {
+            _checkTelemetryConfirmation();
+        }
+        return;
+    }
+
+    switch (message.msgid) {
+        case 42011: { // CC_TELEMETRY_CAMERA
         mavlink_cc_telemetry_camera_t cam;
         mavlink_msg_cc_telemetry_camera_decode(&message, &cam);
 
@@ -467,7 +554,7 @@ void CompanionController::applyFcLink(const QString& fcPort, int fcBaud)
         siyiPort = QStringLiteral("/dev/ttyAMA0");
     }
     if (siyiBaud <= 0) {
-        siyiBaud = 115200;
+        siyiBaud = 57600;
     }
 
     // Guard against port conflict
@@ -478,6 +565,20 @@ void CompanionController::applyFcLink(const QString& fcPort, int fcBaud)
     }
 
     _logMavlink(QStringLiteral("FC"), QStringLiteral("TX"), QString("[TX CMD] Apply FC Link -> %1@%2 bps (SIYI preserved: %3@%4 bps)").arg(port).arg(baud).arg(siyiPort).arg(siyiBaud), 5);
+    _pendingFcPort    = port;
+    _pendingFcBaud    = baud;
+    _pendingSiyiPort  = siyiPort;
+    _pendingSiyiBaud  = siyiBaud;
+    _pendingCommand   = 44011;
+    _waitingTelemetry = false;
+    _configStatus     = QStringLiteral("Applying");
+    emit configStatusChanged();
+    if (!_configTimer) {
+        _configTimer = new QTimer(this);
+        _configTimer->setSingleShot(true);
+        connect(_configTimer, &QTimer::timeout, this, &CompanionController::_configTimedOut);
+    }
+    _configTimer->start(5000);
     sendLinksConfig(baud, siyiBaud, port, siyiPort);
     applyConfig(1, true, QStringLiteral("FC"));
 }
@@ -517,6 +618,20 @@ void CompanionController::applySiyiLink(const QString& siyiPort, int siyiBaud)
     }
 
     _logMavlink(QStringLiteral("SIYI"), QStringLiteral("TX"), QString("[TX CMD] Apply SIYI Link -> %1@%2 bps (FC preserved: %3@%4 bps)").arg(port).arg(baud).arg(fcPort).arg(fcBaud), 5);
+    _pendingFcPort    = fcPort;
+    _pendingFcBaud    = fcBaud;
+    _pendingSiyiPort  = port;
+    _pendingSiyiBaud  = baud;
+    _pendingCommand   = 44011;
+    _waitingTelemetry = false;
+    _configStatus     = QStringLiteral("Applying");
+    emit configStatusChanged();
+    if (!_configTimer) {
+        _configTimer = new QTimer(this);
+        _configTimer->setSingleShot(true);
+        connect(_configTimer, &QTimer::timeout, this, &CompanionController::_configTimedOut);
+    }
+    _configTimer->start(5000);
     sendLinksConfig(fcBaud, baud, fcPort, port);
     applyConfig(1, true, QStringLiteral("SIYI"));
 }
@@ -852,11 +967,16 @@ void CompanionController::applyLinksConfig(const QString& fcPort, int fcBaud,
         emit configStatusChanged();
         return;
     }
+    if (_pendingCommand || _waitingTelemetry) {
+        return;
+    }
 
     _pendingFcPort   = fcPort;
     _pendingFcBaud   = fcBaud;
     _pendingSiyiPort = siyiPort;
     _pendingSiyiBaud = siyiBaud;
+    _pendingCommand  = 44011;
+    _waitingTelemetry = false;
     _configMessage.clear();
 
     if (_linksService) {
@@ -879,6 +999,11 @@ void CompanionController::applyLinksConfig(const QString& fcPort, int fcBaud,
 
 void CompanionController::saveLinksConfig()
 {
+    if (_pendingCommand || _waitingTelemetry) {
+        return;
+    }
+    _pendingCommand   = 44010;
+    _waitingTelemetry = false;
     saveDefaultConfig(1);
 
     _configStatus = QStringLiteral("Applying");
@@ -894,6 +1019,8 @@ void CompanionController::saveLinksConfig()
 
 void CompanionController::_configTimedOut()
 {
+    _pendingCommand = 0;
+    _waitingTelemetry = false;
     if (_configStatus == QStringLiteral("Applying")) {
         _configStatus = QStringLiteral("Timeout");
         emit configStatusChanged();
@@ -902,6 +1029,8 @@ void CompanionController::_configTimedOut()
 
 void CompanionController::_confirmationTimedOut()
 {
+    _pendingCommand = 0;
+    _waitingTelemetry = false;
     if (_configStatus == QStringLiteral("WaitingTelemetry") ||
         _configStatus == QStringLiteral("Applying")) {
         _configStatus = QStringLiteral("Timeout");
@@ -914,6 +1043,8 @@ void CompanionController::resetForTest()
     _sourceSystemId    = -1;
     _sourceComponentId = -1;
     _linksStale        = false;
+    _pendingCommand    = 0;
+    _waitingTelemetry  = false;
     _clearTelemetryState();
 }
 
@@ -921,4 +1052,24 @@ void CompanionController::forceStaleForTest()
 {
     _linksStale = true;
     if (_telemetryWatchdog) _telemetryWatchdog->stop();
+}
+
+void CompanionController::_checkTelemetryConfirmation()
+{
+    if (!_waitingTelemetry || !linksReceived() || _linksStale) {
+        return;
+    }
+    if (_linksService->fcPort() != _pendingFcPort ||
+        _linksService->fcBaud() != _pendingFcBaud ||
+        _linksService->siyiPort() != _pendingSiyiPort ||
+        _linksService->siyiBaud() != _pendingSiyiBaud) {
+        return;
+    }
+    if (_confirmTimer) {
+        _confirmTimer->stop();
+    }
+    _waitingTelemetry = false;
+    _configStatus = QStringLiteral("Success");
+    _configMessage = QStringLiteral("UART configuration confirmed by telemetry");
+    emit configStatusChanged();
 }

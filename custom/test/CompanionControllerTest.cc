@@ -243,6 +243,11 @@ void CompanionControllerTest::_testCompanionPageLoads()
 {
     ignoreLogMessage("default", QtWarningMsg,
                      QRegularExpression(QStringLiteral("QFontDatabase: Cannot find font directory.*")));
+    // The headless test engine has no real window geometry, so the equal-width tab
+    // buttons (width: tabBar.width / 5) emit benign TabBar/TabButton binding-loop
+    // warnings that Qt resolves on its own. They do not affect the page instantiating.
+    ignoreLogMessage("default", QtWarningMsg,
+                     QRegularExpression(QStringLiteral(".*Binding loop detected.*")));
     QQmlEngine engine;
     engine.addImportPath(QStringLiteral("qrc:/qml"));
     QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qml/Custom/AgriDrone/CompanionSettings.qml")));

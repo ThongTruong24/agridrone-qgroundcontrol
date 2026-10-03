@@ -15,6 +15,7 @@ import QGC
 ///   - [[SAVE]] (Save current settings as permanent default)
 ///   - [✓ Áp dụng] (Apply all staged changes)
 Rectangle {
+    QGCPalette { id: qgcPal }
     id: root
 
     property bool   hasChanges:     false
@@ -26,12 +27,12 @@ Rectangle {
     signal saveDefaultClicked()
     signal applyClicked()
 
-    readonly property color _bgCard:      "#161B22"
-    readonly property color _borderColor: "#30363D"
-    readonly property color _accentGreen: "#3FB950"
-    readonly property color _accentYellow:"#D29922"
-    readonly property color _textNormal:  "#E6EDF3"
-    readonly property color _textMuted:   "#8B949E"
+    readonly property color _bgCard:      qgcPal.windowShade
+    readonly property color _borderColor: qgcPal.windowShadeDark
+    readonly property color _accentGreen: qgcPal.colorGreen
+    readonly property color _accentYellow:qgcPal.colorOrange
+    readonly property color _textNormal:  qgcPal.text
+    readonly property color _textMuted:   qgcPal.text
 
     Layout.fillWidth:       true
     Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 2.8
@@ -53,7 +54,7 @@ Rectangle {
         // Status Indicator Pill
         Rectangle {
             radius: 4
-            color: root.hasChanges ? "#2D2200" : "#0D2115"
+            color: root.hasChanges ? qgcPal.windowShade : qgcPal.windowShade
             border.color: root.hasChanges ? root._accentYellow : root._accentGreen
             border.width: 1
             implicitWidth: statusLayout.implicitWidth + 16

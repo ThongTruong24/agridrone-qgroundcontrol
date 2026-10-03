@@ -35,8 +35,8 @@ Item {
     readonly property color _bgColor:       qgcPal.windowShade
     readonly property color _headerColor:   qgcPal.window
     readonly property color _textNormal:    qgcPal.text
-    readonly property color _textWarn:      "#F0A500"
-    readonly property color _textError:     "#FF6B6B"
+    readonly property color _textWarn:      qgcPal.colorOrange
+    readonly property color _textError:     qgcPal.colorRed
     readonly property color _textDebug:     qgcPal.text
     readonly property color _borderColor:   qgcPal.windowShadeDark
 
@@ -80,9 +80,12 @@ Item {
         if (!root._activeVehicle) return
         var formatted = root._activeVehicle.formattedMessages
         if (!formatted) return
-        var lines = formatted.split("\n")
+        // Split by <br/> tags from StatusTextHandler or newlines
+        var lines = formatted.split(/<br\s*\/?>|\n/i)
         for (var i = lines.length - 1; i >= 0; i--) {
-            var plain = lines[i].replace(/<[^>]+>/g, "").trim()
+            var raw = lines[i].trim()
+            if (!raw) continue
+            var plain = raw.replace(/<[^>]+>/g, "").replace(/^"+>?/, "").trim()
             if (plain.length > 0 && root._matchesFilter(plain)) {
                 logModel.append({
                     ts:       Qt.formatTime(new Date(), "hh:mm:ss"),
@@ -96,8 +99,8 @@ Item {
     function _severityColor(sev) {
         if (sev <= 3) return root._textError
         if (sev === 4) return root._textWarn
-        if (sev === 5) return "#3FB950" // Green for TX
-        if (sev === 6) return "#1E8BC3" // Cyan/Blue for RX
+        if (sev === 5) return qgcPal.colorGreen // Green for TX
+        if (sev === 6) return qgcPal.buttonHighlight // Cyan/Blue for RX
         if (sev === 7) return root._textDebug
         return root._textNormal
     }
@@ -365,7 +368,7 @@ Item {
         target: (root.serviceName === "MAVLink") ? null : (root._activeVehicle ? root._activeVehicle : null)
 
         function onNewFormattedMessage(formattedMessage) {
-            var plain = formattedMessage.replace(/<[^>]+>/g, "")
+            var plain = formattedMessage.replace(/<[^>]+>/g, "").replace(/^"+>?/, "").trim()
             if (!root._matchesFilter(plain)) return
 
             // If user typed a sub-filter in search box, respect it

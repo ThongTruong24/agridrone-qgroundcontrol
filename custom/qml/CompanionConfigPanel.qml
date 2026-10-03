@@ -8,6 +8,7 @@ import QGC
 
 /// Config panel that fetches and edits a service's YAML config via companion API.
 Item {
+    QGCPalette { id: qgcPal }
     id: root
 
     /// REST API base URL, e.g. "http://192.168.10.1:8080"
@@ -17,14 +18,14 @@ Item {
     /// Human-readable title
     property string serviceLabel:"Service"
 
-    readonly property color _bgColor:      "#0D1117"
-    readonly property color _headerColor:  "#161B22"
-    readonly property color _borderColor:  "#30363D"
-    readonly property color _accentColor:  "#1E8BC3"
-    readonly property color _successColor: "#3FB950"
-    readonly property color _textNormal:   "#E6EDF3"
-    readonly property color _textDebug:    "#8B949E"
-    readonly property color _textError:    "#FF6B6B"
+    readonly property color _bgColor:      qgcPal.window
+    readonly property color _headerColor:  qgcPal.windowShade
+    readonly property color _borderColor:  qgcPal.windowShadeDark
+    readonly property color _accentColor:  qgcPal.buttonHighlight
+    readonly property color _successColor: qgcPal.colorGreen
+    readonly property color _textNormal:   qgcPal.text
+    readonly property color _textDebug:    qgcPal.text
+    readonly property color _textError:    qgcPal.colorRed
 
     property bool   _loading:        false
     property bool   _saving:         false

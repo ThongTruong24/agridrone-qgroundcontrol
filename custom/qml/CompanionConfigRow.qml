@@ -9,6 +9,7 @@ import QGC
 
 /// One editable key-value row in the config panel
 RowLayout {
+    QGCPalette { id: qgcPal }
     id: root
 
     property string configKey:   ""
@@ -17,11 +18,11 @@ RowLayout {
 
     signal configChanged(string key, var value)
 
-    readonly property color _labelColor:  "#8B949E"
-    readonly property color _inputBg:     "#161B22"
-    readonly property color _inputBorder: "#30363D"
-    readonly property color _textColor:   "#E6EDF3"
-    readonly property color _accentColor: "#1E8BC3"
+    readonly property color _labelColor:  qgcPal.text
+    readonly property color _inputBg:     qgcPal.windowShadeDark
+    readonly property color _inputBorder: qgcPal.windowShadeDark
+    readonly property color _textColor:   qgcPal.text
+    readonly property color _accentColor: qgcPal.buttonHighlight
 
     spacing: 8
 

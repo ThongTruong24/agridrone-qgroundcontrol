@@ -71,6 +71,19 @@
                 "waypoint"
             ],
             "component": "CompanionMissionTab"
+        },
+        {
+            "heading": "Parameters",
+            "keywords": [
+                "param",
+                "parameters",
+                "config",
+                "baud",
+                "camera",
+                "vision",
+                "tuning"
+            ],
+            "component": "CompanionParametersTab"
         }
     ]
 }

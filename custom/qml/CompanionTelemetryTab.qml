@@ -8,6 +8,53 @@ import Custom.AgriDrone
 
 ColumnLayout {
     id: root
+    property bool   _fcAwaitingTelemetry: false
+    property bool   _siyiAwaitingTelemetry: false
+    property string _applySide: ""
+    property string _pendingFcPort: ""
+    property int    _pendingFcBaud: 0
+    property string _pendingSiyiPort: ""
+    property int    _pendingSiyiBaud: 0
+
+    function resetEditState() {
+        root._selectedFcPort = ""
+        root._selectedFcBaud = 0
+        root._userInteractedFc = false
+        root._fcInitialized = false
+        root._selectedSiyiPort = ""
+        root._selectedSiyiBaud = 0
+        root._userInteractedSiyi = false
+        root._siyiInitialized = false
+        root._fcAwaitingTelemetry = false
+        root._siyiAwaitingTelemetry = false
+        root._applySide = ""
+        root._pendingFcPort = ""
+        root._pendingFcBaud = 0
+        root._pendingSiyiPort = ""
+        root._pendingSiyiBaud = 0
+    }
+
+    function sendFcDraft(port, baud) {
+        root._pendingFcPort = port
+        root._pendingFcBaud = baud
+        root._pendingSiyiPort = CompanionController.siyiPort
+        root._pendingSiyiBaud = CompanionController.siyiBaud
+        root._userInteractedFc = true
+        root._applySide = "fc"
+        CompanionController.applyFcLink(port, baud)
+        return true
+    }
+
+    function sendSiyiDraft(port, baud) {
+        root._pendingFcPort = CompanionController.fcPort
+        root._pendingFcBaud = CompanionController.fcBaud
+        root._pendingSiyiPort = port
+        root._pendingSiyiBaud = baud
+        root._userInteractedSiyi = true
+        root._applySide = "siyi"
+        CompanionController.applySiyiLink(port, baud)
+        return true
+    }
 
     Layout.fillWidth: true
     spacing: ScreenTools.defaultFontPixelHeight
@@ -97,8 +144,8 @@ ColumnLayout {
                 height: width
                 radius: width / 2
                 color:  CompanionController.hasLinksTelemetry
-                        ? (CompanionController.fcStatus === 2 ? "#2ECC71" : (CompanionController.fcStatus === 1 ? "#F39C12" : "#E74C3C"))
-                        : "#7F8C8D"
+                        ? (CompanionController.fcStatus === 2 ? qgcPal.colorGreen : (CompanionController.fcStatus === 1 ? qgcPal.colorOrange : qgcPal.colorRed))
+                        : qgcPal.windowShadeDark
             }
 
             QGCLabel {
@@ -146,8 +193,17 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToActive()
-                onModelChanged: syncToActive()
+                Component.onCompleted: {
+                    if (CompanionController.hasLinksTelemetry && CompanionController.fcPort !== "") {
+                        syncToActive()
+                        root._fcInitialized = true
+                    }
+                }
+                onModelChanged: {
+                    if (!root._fcInitialized) {
+                        syncToActive()
+                    }
+                }
 
                 onActivated: (index) => {
                     root._userInteractedFc = true
@@ -165,6 +221,7 @@ ColumnLayout {
                 placeholderText: "/dev/tty..."
                 onTextChanged: {
                     if (fcPortCombo.currentIndex === fcPortCombo.model.length - 1) {
+                        root._userInteractedFc = true
                         root._selectedFcPort = text.trim()
                     }
                 }
@@ -190,8 +247,11 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToActive()
-                onModelChanged: syncToActive()
+                Component.onCompleted: {
+                    if (CompanionController.hasLinksTelemetry && CompanionController.fcBaud > 0) {
+                        syncToActive()
+                    }
+                }
 
                 onActivated: (index) => {
                     root._userInteractedFc = true
@@ -202,7 +262,7 @@ ColumnLayout {
             Item { Layout.fillWidth: true }
 
             QGCButton {
-                text: CompanionController.configStatus === "APPLYING" ? qsTr("Applying...") : qsTr("Apply FC Link")
+                text: CompanionController.configStatus === "APPLYING" ? qsTr("Applying...") : qsTr("Apply")
                 primary: true
                 enabled: CompanionController.hasLinksTelemetry && CompanionController.configStatus !== "APPLYING"
                 onClicked: {
@@ -226,7 +286,9 @@ ColumnLayout {
                         baud = CompanionController.fcBaud
                     }
 
-                    // Keep _userInteractedFc true during apply so incoming 1Hz telemetry does NOT revert user selection
+                    root._userInteractedFc = true
+                    root._selectedFcPort = port
+                    root._selectedFcBaud = baud
                     CompanionController.applyFcLink(port, baud)
                 }
             }
@@ -246,7 +308,7 @@ ColumnLayout {
                 QGCLabel {
                     text: CompanionController.hasLinksTelemetry && CompanionController.fcPort !== "" ? CompanionController.fcPort : "--"
                     font.bold: true
-                    color: CompanionController.hasLinksTelemetry ? "#2ECC71" : qgcPal.text
+                    color: CompanionController.hasLinksTelemetry ? qgcPal.colorGreen : qgcPal.text
                 }
             }
 
@@ -290,7 +352,7 @@ ColumnLayout {
                 QGCLabel {
                     text: CompanionController.hasLinksTelemetry ? (CompanionController.fcTxErr + " pkts") : "--"
                     font.bold: true
-                    color: CompanionController.hasLinksTelemetry && CompanionController.fcTxErr > 0 ? "#E74C3C" : qgcPal.text
+                    color: CompanionController.hasLinksTelemetry && CompanionController.fcTxErr > 0 ? qgcPal.colorRed : qgcPal.text
                 }
             }
 
@@ -300,7 +362,7 @@ ColumnLayout {
                 QGCLabel {
                     text: formatDropRate(CompanionController.fcRxLoss)
                     font.bold: true
-                    color: CompanionController.hasLinksTelemetry && CompanionController.fcRxLoss > 2.0 ? "#E74C3C" : qgcPal.text
+                    color: CompanionController.hasLinksTelemetry && CompanionController.fcRxLoss > 2.0 ? qgcPal.colorRed : qgcPal.text
                 }
             }
         }
@@ -321,8 +383,8 @@ ColumnLayout {
                 height: width
                 radius: width / 2
                 color:  CompanionController.hasLinksTelemetry
-                        ? (CompanionController.siyiStatus === 2 ? "#2ECC71" : (CompanionController.siyiStatus === 1 ? "#F39C12" : "#E74C3C"))
-                        : "#7F8C8D"
+                        ? (CompanionController.siyiStatus === 2 ? qgcPal.colorGreen : (CompanionController.siyiStatus === 1 ? qgcPal.colorOrange : qgcPal.colorRed))
+                        : qgcPal.windowShadeDark
             }
 
             QGCLabel {
@@ -370,8 +432,17 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToActive()
-                onModelChanged: syncToActive()
+                Component.onCompleted: {
+                    if (CompanionController.hasLinksTelemetry && CompanionController.siyiPort !== "") {
+                        syncToActive()
+                        root._siyiInitialized = true
+                    }
+                }
+                onModelChanged: {
+                    if (!root._siyiInitialized) {
+                        syncToActive()
+                    }
+                }
 
                 onActivated: (index) => {
                     root._userInteractedSiyi = true
@@ -389,6 +460,7 @@ ColumnLayout {
                 placeholderText: "/dev/tty..."
                 onTextChanged: {
                     if (siyiPortCombo.currentIndex === siyiPortCombo.model.length - 1) {
+                        root._userInteractedSiyi = true
                         root._selectedSiyiPort = text.trim()
                     }
                 }
@@ -414,8 +486,11 @@ ColumnLayout {
                     }
                 }
 
-                Component.onCompleted: syncToActive()
-                onModelChanged: syncToActive()
+                Component.onCompleted: {
+                    if (CompanionController.hasLinksTelemetry && CompanionController.siyiBaud > 0) {
+                        syncToActive()
+                    }
+                }
 
                 onActivated: (index) => {
                     root._userInteractedSiyi = true
@@ -426,7 +501,7 @@ ColumnLayout {
             Item { Layout.fillWidth: true }
 
             QGCButton {
-                text: CompanionController.configStatus === "APPLYING" ? qsTr("Applying...") : qsTr("Apply SIYI Link")
+                text: CompanionController.configStatus === "APPLYING" ? qsTr("Applying...") : qsTr("Apply")
                 primary: true
                 enabled: CompanionController.hasLinksTelemetry && CompanionController.configStatus !== "APPLYING"
                 onClicked: {
@@ -451,6 +526,9 @@ ColumnLayout {
                     }
 
                     // Keep _userInteractedSiyi true during apply so incoming 1Hz telemetry does NOT revert user selection
+                    root._userInteractedSiyi = true
+                    root._selectedSiyiPort = port
+                    root._selectedSiyiBaud = baud
                     CompanionController.applySiyiLink(port, baud)
                 }
             }
@@ -470,7 +548,7 @@ ColumnLayout {
                 QGCLabel {
                     text: CompanionController.hasLinksTelemetry && CompanionController.siyiPort !== "" ? CompanionController.siyiPort : "--"
                     font.bold: true
-                    color: CompanionController.hasLinksTelemetry ? "#2ECC71" : qgcPal.text
+                    color: CompanionController.hasLinksTelemetry ? qgcPal.colorGreen : qgcPal.text
                 }
             }
 
@@ -514,7 +592,7 @@ ColumnLayout {
                 QGCLabel {
                     text: CompanionController.hasLinksTelemetry ? (CompanionController.siyiTxErr + " pkts") : "--"
                     font.bold: true
-                    color: CompanionController.hasLinksTelemetry && CompanionController.siyiTxErr > 0 ? "#E74C3C" : qgcPal.text
+                    color: CompanionController.hasLinksTelemetry && CompanionController.siyiTxErr > 0 ? qgcPal.colorRed : qgcPal.text
                 }
             }
 
@@ -524,13 +602,28 @@ ColumnLayout {
                 QGCLabel {
                     text: formatDropRate(CompanionController.siyiRxLoss)
                     font.bold: true
-                    color: CompanionController.hasLinksTelemetry && CompanionController.siyiRxLoss > 2.0 ? "#E74C3C" : qgcPal.text
+                    color: CompanionController.hasLinksTelemetry && CompanionController.siyiRxLoss > 2.0 ? qgcPal.colorRed : qgcPal.text
                 }
             }
         }
     }
 
-    // —— 3. MAVLink Command & Event Audit Log Group —————————————————————
+    
+    RowLayout {
+        Layout.fillWidth: true
+        Item { Layout.fillWidth: true }
+        QGCButton {
+            objectName: "saveUartButton"
+            text: qsTr("Save UART Defaults")
+            enabled: CompanionController.hasLinksTelemetry &&
+                     CompanionController.configStatus !== "Applying" &&
+                     CompanionController.configStatus !== "WaitingTelemetry" &&
+                     !root.hasPendingFcChanges && !root.hasPendingSiyiChanges
+            onClicked: CompanionController.saveLinksConfig()
+        }
+    }
+
+// —— 3. MAVLink Command & Event Audit Log Group —————————————————————
     SettingsGroupLayout {
         Layout.fillWidth: true
         heading: qsTr("MAVLink Command & Event Audit Log")
@@ -546,48 +639,63 @@ ColumnLayout {
         }
     }
 
-    // Auto-sync initial ports & baudrates from telemetry once, and re-sync upon ACK acceptance
+    // Keep draft values until fresh Companion telemetry confirms the applied values.
     Connections {
         target: CompanionController
 
         function onCommandAckReceived(command, result, text) {
-            // Keep draft selection stable; do not revert immediately on ACK
-            if (command === 44011 && result !== 0) {
-                // If rejected, unlock draft so UI shows current active state
+            if (command === 44011 && result === 0) {
+                root._fcAwaitingTelemetry = (root._applySide === "fc")
+                root._siyiAwaitingTelemetry = (root._applySide === "siyi")
+            }
+        }
+
+        function onConfigStatusChanged() {
+            if (CompanionController.configStatus === "Success" && root._fcAwaitingTelemetry &&
+                CompanionController.fcPort === root._pendingFcPort && CompanionController.fcBaud === root._pendingFcBaud) {
+                root._fcAwaitingTelemetry = false
                 root._userInteractedFc = false
-                root._userInteractedSiyi = false
+                root._selectedFcPort = ""
+                root._selectedFcBaud = 0
+                root._applySide = ""
                 fcPortCombo.syncToActive()
                 fcBaudCombo.syncToActive()
+            }
+            if (CompanionController.configStatus === "Success" && root._siyiAwaitingTelemetry &&
+                CompanionController.siyiPort === root._pendingSiyiPort && CompanionController.siyiBaud === root._pendingSiyiBaud) {
+                root._siyiAwaitingTelemetry = false
+                root._userInteractedSiyi = false
+                root._selectedSiyiPort = ""
+                root._selectedSiyiBaud = 0
+                root._applySide = ""
                 siyiPortCombo.syncToActive()
                 siyiBaudCombo.syncToActive()
             }
+            if (CompanionController.configStatus === "Failed" || CompanionController.configStatus === "Timeout") {
+                root._fcAwaitingTelemetry = false
+                root._siyiAwaitingTelemetry = false
+                root._applySide = ""
+            }
+        }
+
+        function onVehicleEpochChanged() {
+            root.resetEditState()
         }
 
         function onLinksChanged() {
             if (CompanionController.hasLinksTelemetry) {
-                // Clear user draft lock ONLY when incoming telemetry matches the new selection
-                if (root._userInteractedFc && root._selectedFcPort !== "" && CompanionController.fcPort === root._selectedFcPort) {
-                    root._userInteractedFc = false
-                    root._selectedFcPort = ""
-                    root._selectedFcBaud = 0
-                }
-                if (root._userInteractedSiyi && root._selectedSiyiPort !== "" && CompanionController.siyiPort === root._selectedSiyiPort) {
-                    root._userInteractedSiyi = false
-                    root._selectedSiyiPort = ""
-                    root._selectedSiyiBaud = 0
-                }
-
                 if (!root._fcInitialized && CompanionController.fcPort !== "") {
                     root._fcInitialized = true
+                    fcPortCombo.syncToActive()
+                    fcBaudCombo.syncToActive()
                 }
                 if (!root._siyiInitialized && CompanionController.siyiPort !== "") {
                     root._siyiInitialized = true
+                    siyiPortCombo.syncToActive()
+                    siyiBaudCombo.syncToActive()
                 }
-
-                fcPortCombo.syncToActive()
-                fcBaudCombo.syncToActive()
-                siyiPortCombo.syncToActive()
-                siyiBaudCombo.syncToActive()
+            } else {
+                root.resetEditState()
             }
         }
     }
