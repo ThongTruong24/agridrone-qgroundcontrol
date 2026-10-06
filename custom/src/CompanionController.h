@@ -57,7 +57,8 @@ class CompanionController : public QObject
     Q_PROPERTY(int configErrorCode READ configErrorCode NOTIFY configStatusChanged)
     Q_PROPERTY(QStringList availablePorts READ availablePorts NOTIFY linksChanged)
     Q_PROPERTY(int vehicleEpoch READ vehicleEpoch NOTIFY vehicleEpochChanged)
-    Q_PROPERTY(bool boundingBoxEnabled READ boundingBoxEnabled WRITE setBoundingBoxEnabled NOTIFY aiVisionControlChanged)
+    Q_PROPERTY(
+        bool boundingBoxEnabled READ boundingBoxEnabled WRITE setBoundingBoxEnabled NOTIFY aiVisionControlChanged)
     Q_PROPERTY(bool trackingEnabled READ trackingEnabled WRITE setTrackingEnabled NOTIFY aiVisionControlChanged)
     Q_PROPERTY(bool followingEnabled READ followingEnabled WRITE setFollowingEnabled NOTIFY aiVisionControlChanged)
 
@@ -138,6 +139,7 @@ public:
     void setTrackingEnabled(bool enabled);
     void setFollowingEnabled(bool enabled);
 
+    Q_INVOKABLE bool sendAiVisionTrackPoint(double normalizedX, double normalizedY, double normalizedRadius);
     Q_INVOKABLE void applyLinksConfig(const QString& fcPort, int fcBaud, const QString& siyiPort, int siyiBaud);
     Q_INVOKABLE void saveLinksConfig();
     Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;

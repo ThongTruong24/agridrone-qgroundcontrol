@@ -4,6 +4,8 @@
         <file alias="logo_i.png">res/Custom/Images/logo_i.png</file>
     </qresource>
     <qresource prefix="/Custom/qml">
+        <file alias="QGroundControl/FlyView/OnScreenCameraTrackingController.qml">src/FlyView/OnScreenCameraTrackingController.qml</file>
+        <file alias="QGroundControl/FlyView/OnScreenGimbalController.qml">src/FlyView/OnScreenGimbalController.qml</file>
         <file alias="QGroundControl/FlyView/FlyViewToolStripActionList.qml">src/FlyViewToolStripActionList.qml</file>
         <file alias="QGroundControl/Toolbar/FlyViewToolBar.qml">src/FlyViewToolBar.qml</file>
     </qresource>

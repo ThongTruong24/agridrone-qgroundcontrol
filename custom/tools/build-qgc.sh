@@ -4,8 +4,8 @@ set -euo pipefail
 # ============================================================
 # AgriDrone QGroundControl Build Script
 #
-# - Check latest agridrone-mavlink origin/main
-# - Reconfigure QGC when MAVLink commit changes
+# - Report latest agridrone-mavlink origin/main
+# - Reconfigure QGC when the pinned MAVLink commit changes
 # - Limit parallel build jobs to avoid exhausting RAM
 # - Lower build CPU/I/O priority to keep Ubuntu responsive
 #
@@ -20,6 +20,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 BUILD="$ROOT/build"
 
 MAVLINK_REPO="https://github.com/ThongTruong24/agridrone-mavlink.git"
+MAVLINK_REVISION_FILE="$ROOT/custom/mavlink-revision.txt"
 
 # ------------------------------------------------------------
 # Build resource limits
@@ -57,8 +58,15 @@ REMOTE_SHA="$(
     awk '{print $1}'
 )"
 
+IFS= read -r EXPECTED_SHA < "$MAVLINK_REVISION_FILE"
+
 if [[ -z "$REMOTE_SHA" ]]; then
     echo "ERROR: Cannot resolve MAVLink origin/main"
+    exit 1
+fi
+
+if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: Invalid MAVLink revision in $MAVLINK_REVISION_FILE"
     exit 1
 fi
 
@@ -73,6 +81,7 @@ if [[ -f "$BUILD/CMakeCache.txt" ]]; then
 fi
 
 echo "Remote MAVLink : $REMOTE_SHA"
+echo "Pinned MAVLink : $EXPECTED_SHA"
 echo "Build MAVLink  : ${CACHED_SHA:-not configured}"
 echo
 
@@ -80,9 +89,9 @@ echo
 # Configure QGroundControl
 # ------------------------------------------------------------
 
-if [[ "$REMOTE_SHA" != "$CACHED_SHA" ]]; then
+if [[ "$EXPECTED_SHA" != "$CACHED_SHA" ]]; then
 
-    echo "== MAVLink changed or build not configured =="
+    echo "== Pinned MAVLink changed or build not configured =="
     echo "== Configuring QGroundControl =="
 
     cmake \

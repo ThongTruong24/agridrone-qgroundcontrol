@@ -1,6 +1,7 @@
 #include "CompanionController.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 
@@ -249,6 +250,35 @@ void CompanionController::_sendAiVisionControl()
                                                  MAVLinkProtocol::getComponentId(), link->mavlinkChannel(), &message,
                                                  &payload);
     (void) _activeVehicle->sendMessageOnLinkThreadSafe(link.get(), message);
+}
+
+bool CompanionController::sendAiVisionTrackPoint(double normalizedX, double normalizedY, double normalizedRadius)
+{
+    if (!_boundingBoxEnabled || !std::isfinite(normalizedX) || !std::isfinite(normalizedY) ||
+        !std::isfinite(normalizedRadius) || normalizedX < 0.0 || normalizedX > 1.0 || normalizedY < 0.0 ||
+        normalizedY > 1.0 || normalizedRadius < 0.0 || normalizedRadius > 1.0 || !_activeVehicle) {
+        return false;
+    }
+
+    const auto link = _activeVehicle->vehicleLinkManager()->primaryLink().lock();
+    if (!link) {
+        return false;
+    }
+
+    mavlink_command_long_t payload{};
+    payload.target_system = _activeVehicle->id();
+    payload.target_component = kCompanionComponentId;
+    payload.command = MAV_CMD_CAMERA_TRACK_POINT;
+    payload.param1 = static_cast<float>(normalizedX);
+    payload.param2 = static_cast<float>(normalizedY);
+    payload.param3 = static_cast<float>(normalizedRadius);
+    payload.param4 = 0.0F;
+
+    // Point selection is an event, so bypass the ACK/retry command queue and transmit it once.
+    mavlink_message_t message{};
+    mavlink_msg_command_long_encode_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+                                         link->mavlinkChannel(), &message, &payload);
+    return _activeVehicle->sendMessageOnLinkThreadSafe(link.get(), message);
 }
 
 void CompanionController::_mavlinkMessageReceived(const mavlink_message_t& message)

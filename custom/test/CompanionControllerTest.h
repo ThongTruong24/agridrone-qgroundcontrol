@@ -15,6 +15,7 @@ private slots:
     void _testMissionAndLogFiltering();
     void _testConfigResponses();
     void _testAiVisionStateInvariant();
+    void _testAiVisionTrackPointGuards();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -26,4 +27,5 @@ private slots:
     void _testUartAckFilteringAndRetry();
     void _testQmlDraftAndSaveGuard();
     void _testAiVisionTransmission();
+    void _testAiVisionTrackPointTransmission();
 };
