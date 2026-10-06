@@ -22,7 +22,7 @@ inline constexpr int kTelemetryTimeoutMs  = 3500;  // CC telemetry is 1 Hz: thre
 inline constexpr int kCommandAckTimeoutMs = 5000;
 inline constexpr int kConfirmTimeoutMs    = 6000;  // CC restarts the router before links telemetry resumes
 inline constexpr int kToastMs             = 4000;
-inline constexpr int kMaxPortBytes = sizeof(mavlink_cc_telemetry_links_t::fc_port) - 1;
+inline constexpr int kMaxPortBytes = sizeof(mavlink_cc_serial_link_t::port) - 1;
 
 template <std::size_t N>
 QString fromMavString(const char (&s)[N])

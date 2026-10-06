@@ -26,18 +26,17 @@ void packLinksForTest(uint8_t system, uint8_t component, mavlink_message_t* mess
                       uint32_t fcBytesRx, uint32_t fcBytesTx, float fcRate, uint8_t status, const char* fcPort,
                       const char* siyiPort)
 {
-    mavlink_cc_telemetry_links_t packet{};
-    packet.fc_baudrate = fcBaud;
-    packet.siyi_baudrate = siyiBaud;
-    packet.fc_bytes_rx = fcBytesRx;
-    packet.fc_bytes_tx = fcBytesTx;
-    packet.fc_tx_rate = fcRate;
-    packet.fc_status = status;
-    packet.siyi_status = status;
-    packet.transport_type = 1;
-    copyField(packet.fc_port, fcPort);
-    copyField(packet.siyi_port, siyiPort);
-    mavlink_msg_cc_telemetry_links_encode(system, component, message, &packet);
+    mavlink_cc_serial_link_t packet{};
+    packet.link_index = 0;
+    packet.link_count = 2;
+    packet.baudrate = fcBaud;
+    packet.rx_bytes = fcBytesRx;
+    packet.tx_bytes = fcBytesTx;
+    packet.tx_rate = fcRate;
+    packet.status = status;
+    copyField(packet.name, "FC");
+    copyField(packet.port, fcPort);
+    mavlink_msg_cc_serial_link_encode(system, component, message, &packet);
 }
 
 void packCameraForTest(mavlink_message_t* message)
@@ -320,19 +319,16 @@ void CompanionVehicleLifecycleTest::_testUartAckFilteringAndRetry()
 
     controller.applyLinksConfig(QStringLiteral("fc-new"), 460800, QStringLiteral("siyi-new"), 57600);
     QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_TELEMETRY_LINKS) >= 1, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_SERIAL_LINK) >= 1, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(static_cast<MAV_CMD>(44011), 191) >= 1, 3000);
 
     mavlink_message_t sent{};
-    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_CC_TELEMETRY_LINKS, sent));
-    mavlink_cc_telemetry_links_t sentLinks{};
-    mavlink_msg_cc_telemetry_links_decode(&sent, &sentLinks);
-    QCOMPARE(sentLinks.fc_baudrate, 460800U);
-    QCOMPARE(sentLinks.siyi_baudrate, 57600U);
-    QCOMPARE(sentLinks.fc_tx_rate, 4.5F);
-    QCOMPARE(sentLinks.fc_status, 3);
-    QCOMPARE(QString::fromLatin1(sentLinks.fc_port), QStringLiteral("fc-new"));
-    QCOMPARE(QString::fromLatin1(sentLinks.siyi_port), QStringLiteral("siyi-new"));
+    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_CC_SERIAL_LINK, sent));
+    mavlink_cc_serial_link_t sentLinks{};
+    mavlink_msg_cc_serial_link_decode(&sent, &sentLinks);
+    QCOMPARE(sentLinks.baudrate, 57600U);
+    QCOMPARE(sentLinks.status, 3);
+    QCOMPARE(QString::fromLatin1(sentLinks.port), QStringLiteral("siyi-new"));
 
     QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_LONG, sent));
     mavlink_command_long_t sentCommand{};

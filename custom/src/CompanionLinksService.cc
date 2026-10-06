@@ -54,7 +54,7 @@ void CompanionLinksService::resetState()
 
 bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& message)
 {
-    if (message.msgid != 42010) { // CC_TELEMETRY_LINKS
+    if (message.msgid != 42010 && message.msgid != MAVLINK_MSG_ID_CC_SERIAL_LINK) {
         return false;
     }
 
@@ -63,82 +63,64 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
         return false;
     }
 
-    mavlink_cc_telemetry_links_t lnk;
-    mavlink_msg_cc_telemetry_links_decode(&message, &lnk);
+    mavlink_cc_serial_link_t lnk;
+    mavlink_msg_cc_serial_link_decode(&message, &lnk);
 
     _hasLinksTelemetry = true;
-    _fcBaud = lnk.fc_baudrate;
-    _siyiBaud = lnk.siyi_baudrate;
-    _fcPort = QString::fromUtf8(lnk.fc_port, qstrnlen(lnk.fc_port, sizeof(lnk.fc_port)));
-    _siyiPort = QString::fromUtf8(lnk.siyi_port, qstrnlen(lnk.siyi_port, sizeof(lnk.siyi_port)));
-    _fcStatus = lnk.fc_status;
-    _siyiStatus = lnk.siyi_status;
+    QString linkName = QString::fromUtf8(lnk.name, qstrnlen(lnk.name, sizeof(lnk.name))).trimmed().toUpper();
+    QString portStr = QString::fromUtf8(lnk.port, qstrnlen(lnk.port, sizeof(lnk.port))).trimmed();
 
-    _fcTxRate = lnk.fc_tx_rate;
-    _fcRxRate = lnk.fc_rx_rate;
-    _fcTxRateMax = lnk.fc_tx_rate_max;
-    _fcTxRateMulti = lnk.fc_tx_rate_multi;
-    _fcRxLoss = lnk.fc_rx_loss;
-    _fcTxErr = lnk.fc_tx_err;
-    _fcBytesRx = lnk.fc_bytes_rx;
-    _fcBytesTx = lnk.fc_bytes_tx;
-    _fcBitrateKbps = (_fcRxRate * 8.0f) / 1000.0f;
-    _fcPacketDropRate = _fcRxLoss;
+    if (linkName == QStringLiteral("FC") || lnk.link_index == 0) {
+        _fcBaud = static_cast<int>(lnk.baudrate);
+        _fcPort = portStr;
+        _fcStatus = lnk.status;
+        _fcTxRate = lnk.tx_rate;
+        _fcRxRate = lnk.rx_rate;
+        _fcRxLoss = lnk.rx_loss;
+        _fcTxErr = lnk.rx_errors;
+        _fcBytesRx = lnk.rx_bytes;
+        _fcBytesTx = lnk.tx_bytes;
+        _fcBitrateKbps = (_fcRxRate * 8.0f) / 1000.0f;
+        _fcPacketDropRate = _fcRxLoss;
 
-    _siyiTxRate = lnk.siyi_tx_rate;
-    _siyiRxRate = lnk.siyi_rx_rate;
-    _siyiTxRateMax = lnk.siyi_tx_rate_max;
-    _siyiTxRateMulti = lnk.siyi_tx_rate_multi;
-    _siyiRxLoss = lnk.siyi_rx_loss;
-    _siyiTxErr = lnk.siyi_tx_err;
-    _siyiBytesRx = lnk.siyi_bytes_rx;
-    _siyiBytesTx = lnk.siyi_bytes_tx;
-    _siyiBitrateKbps = (_siyiRxRate * 8.0f) / 1000.0f;
-    _siyiPacketDropRate = _siyiRxLoss;
-    _siyiLinkQuality = (_siyiRxLoss < 100.0f) ? static_cast<int>(100.0f - _siyiRxLoss) : 0;
+        if (_fcStatus != _prevFcStatus) {
+            emit logMessage(QStringLiteral("FC"), QStringLiteral("INFO"),
+                             QStringLiteral("[EVENT] FC Link Status -> %1 (%2@%3 bps)")
+                                 .arg(_fcStatus == 2 ? "ONLINE" : (_fcStatus == 1 ? "STANDBY" : "OFFLINE"))
+                                 .arg(_fcPort).arg(_fcBaud),
+                             _fcStatus == 2 ? 6 : 4);
+            _prevFcStatus = _fcStatus;
+        }
+    } else if (linkName == QStringLiteral("SIYI") || lnk.link_index == 1) {
+        _siyiBaud = static_cast<int>(lnk.baudrate);
+        _siyiPort = portStr;
+        _siyiStatus = lnk.status;
+        _siyiTxRate = lnk.tx_rate;
+        _siyiRxRate = lnk.rx_rate;
+        _siyiRxLoss = lnk.rx_loss;
+        _siyiTxErr = lnk.rx_errors;
+        _siyiBytesRx = lnk.rx_bytes;
+        _siyiBytesTx = lnk.tx_bytes;
+        _siyiBitrateKbps = (_siyiRxRate * 8.0f) / 1000.0f;
+        _siyiPacketDropRate = _siyiRxLoss;
+        _siyiLinkQuality = (_siyiRxLoss < 100.0f) ? static_cast<int>(100.0f - _siyiRxLoss) : 0;
 
-    switch (lnk.transport_type) {
-    case 1: _transportProtocol = QStringLiteral("Serial / UART"); break;
-    case 2: _transportProtocol = QStringLiteral("UDP"); break;
-    case 3: _transportProtocol = QStringLiteral("TCP"); break;
-    default: _transportProtocol = QStringLiteral("Serial / UART"); break;
+        if (_siyiStatus != _prevSiyiStatus) {
+            emit logMessage(QStringLiteral("SIYI"), QStringLiteral("INFO"),
+                             QStringLiteral("[EVENT] SIYI Link Status -> %1 (%2@%3 bps)")
+                                 .arg(_siyiStatus == 2 ? "ONLINE" : (_siyiStatus == 1 ? "STANDBY" : "OFFLINE"))
+                                 .arg(_siyiPort).arg(_siyiBaud),
+                             _siyiStatus == 2 ? 6 : 4);
+            _prevSiyiStatus = _siyiStatus;
+        }
     }
 
-    // Available serial ports parsing
-    QString portsRaw = QString::fromUtf8(lnk.available_ports, qstrnlen(lnk.available_ports, sizeof(lnk.available_ports))).trimmed();
-    if (!portsRaw.isEmpty()) {
-        QStringList portTokens = portsRaw.split(',', Qt::SkipEmptyParts);
-        QStringList fullPaths;
-        for (const QString& p : portTokens) {
-            QString trimmed = p.trimmed();
-            if (!trimmed.startsWith("/dev/")) {
-                fullPaths.append("/dev/" + trimmed);
-            } else {
-                fullPaths.append(trimmed);
-            }
-        }
-        if (!fullPaths.isEmpty() && fullPaths != _availablePorts) {
-            _availablePorts = fullPaths;
+    if (!portStr.isEmpty()) {
+        QString fullPath = portStr.startsWith("/dev/") ? portStr : ("/dev/" + portStr);
+        if (!_availablePorts.contains(fullPath)) {
+            _availablePorts.append(fullPath);
             emit availablePortsChanged();
         }
-    }
-
-    if (_fcStatus != _prevFcStatus) {
-        emit logMessage(QStringLiteral("FC"), QStringLiteral("INFO"),
-                         QStringLiteral("[EVENT] FC Link Status -> %1 (%2@%3 bps)")
-                             .arg(_fcStatus == 2 ? "ONLINE" : (_fcStatus == 1 ? "STANDBY" : "OFFLINE"))
-                             .arg(_fcPort).arg(_fcBaud),
-                         _fcStatus == 2 ? 6 : 4);
-        _prevFcStatus = _fcStatus;
-    }
-
-    if (_siyiStatus != _prevSiyiStatus) {
-        emit logMessage(QStringLiteral("SIYI"), QStringLiteral("INFO"),
-                         QStringLiteral("[EVENT] SIYI Link Status -> %1 (%2@%3 bps)")
-                             .arg(_siyiStatus == 2 ? "ONLINE" : (_siyiStatus == 1 ? "STANDBY" : "OFFLINE"))
-                             .arg(_siyiPort).arg(_siyiBaud),
-                         _siyiStatus == 2 ? 6 : 4);
-        _prevSiyiStatus = _siyiStatus;
     }
 
     emit linksChanged();
@@ -171,40 +153,46 @@ void CompanionLinksService::sendLinksConfig(Vehicle* vehicle, int fcBaud, int si
     }
 
     mavlink_message_t msg;
-    mavlink_cc_telemetry_links_t l{};
-    l.fc_baudrate = static_cast<uint32_t>(fcBaud);
-    l.siyi_baudrate = static_cast<uint32_t>(siyiBaud);
-    l.fc_bytes_rx = _fcBytesRx;
-    l.fc_bytes_tx = _fcBytesTx;
-    l.fc_tx_rate = _fcTxRate;
-    l.fc_rx_rate = _fcRxRate;
-    l.fc_tx_rate_max = _fcTxRateMax;
-    l.fc_tx_rate_multi = _fcTxRateMulti;
-    l.fc_rx_loss = _fcRxLoss;
-    l.fc_tx_err = _fcTxErr;
-    l.fc_status = static_cast<uint8_t>(_fcStatus);
-    l.siyi_status = static_cast<uint8_t>(_siyiStatus);
-    l.siyi_bytes_rx = _siyiBytesRx;
-    l.siyi_bytes_tx = _siyiBytesTx;
-    l.siyi_tx_rate = _siyiTxRate;
-    l.siyi_rx_rate = _siyiRxRate;
-    l.siyi_tx_rate_max = _siyiTxRateMax;
-    l.siyi_tx_rate_multi = _siyiTxRateMulti;
-    l.siyi_rx_loss = _siyiRxLoss;
-    l.siyi_tx_err = _siyiTxErr;
-    l.transport_type = 1;
-
+    // Send FC link
+    mavlink_cc_serial_link_t fcLink{};
+    fcLink.link_index = 0;
+    fcLink.link_count = 2;
+    fcLink.baudrate = static_cast<uint32_t>(fcBaud);
+    fcLink.status = static_cast<uint8_t>(_fcStatus);
+    strncpy(fcLink.name, "FC", sizeof(fcLink.name) - 1);
     QByteArray fcBytes = fcPort.toUtf8();
-    strncpy(l.fc_port, fcBytes.constData(), sizeof(l.fc_port) - 1);
-    QByteArray siyiBytes = siyiPort.toUtf8();
-    strncpy(l.siyi_port, siyiBytes.constData(), sizeof(l.siyi_port) - 1);
+    strncpy(fcLink.port, fcBytes.constData(), sizeof(fcLink.port) - 1);
 
-    mavlink_msg_cc_telemetry_links_encode_chan(
+    mavlink_msg_cc_serial_link_encode_chan(
         MAVLinkProtocol::instance()->getSystemId(),
         MAVLinkProtocol::getComponentId(),
         sharedLink->mavlinkChannel(),
         &msg,
-        &l
+        &fcLink
+    );
+
+    if (vehicle) {
+        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    } else {
+        sharedLink->sendMessageThreadSafe(msg);
+    }
+
+    // Send SIYI link
+    mavlink_cc_serial_link_t siyiLink{};
+    siyiLink.link_index = 1;
+    siyiLink.link_count = 2;
+    siyiLink.baudrate = static_cast<uint32_t>(siyiBaud);
+    siyiLink.status = static_cast<uint8_t>(_siyiStatus);
+    strncpy(siyiLink.name, "SIYI", sizeof(siyiLink.name) - 1);
+    QByteArray siyiBytes = siyiPort.toUtf8();
+    strncpy(siyiLink.port, siyiBytes.constData(), sizeof(siyiLink.port) - 1);
+
+    mavlink_msg_cc_serial_link_encode_chan(
+        MAVLinkProtocol::instance()->getSystemId(),
+        MAVLinkProtocol::getComponentId(),
+        sharedLink->mavlinkChannel(),
+        &msg,
+        &siyiLink
     );
 
     if (vehicle) {
