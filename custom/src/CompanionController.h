@@ -57,6 +57,9 @@ class CompanionController : public QObject
     Q_PROPERTY(int configErrorCode READ configErrorCode NOTIFY configStatusChanged)
     Q_PROPERTY(QStringList availablePorts READ availablePorts NOTIFY linksChanged)
     Q_PROPERTY(int vehicleEpoch READ vehicleEpoch NOTIFY vehicleEpochChanged)
+    Q_PROPERTY(bool boundingBoxEnabled READ boundingBoxEnabled WRITE setBoundingBoxEnabled NOTIFY aiVisionControlChanged)
+    Q_PROPERTY(bool trackingEnabled READ trackingEnabled WRITE setTrackingEnabled NOTIFY aiVisionControlChanged)
+    Q_PROPERTY(bool followingEnabled READ followingEnabled WRITE setFollowingEnabled NOTIFY aiVisionControlChanged)
 
 public:
     explicit CompanionController(QObject* parent = nullptr);
@@ -125,6 +128,16 @@ public:
 
     int vehicleEpoch() const { return _vehicleEpoch; }
 
+    bool boundingBoxEnabled() const { return _boundingBoxEnabled; }
+
+    bool trackingEnabled() const { return _trackingEnabled; }
+
+    bool followingEnabled() const { return _followingEnabled; }
+
+    void setBoundingBoxEnabled(bool enabled);
+    void setTrackingEnabled(bool enabled);
+    void setFollowingEnabled(bool enabled);
+
     Q_INVOKABLE void applyLinksConfig(const QString& fcPort, int fcBaud, const QString& siyiPort, int siyiBaud);
     Q_INVOKABLE void saveLinksConfig();
     Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;
@@ -154,6 +167,7 @@ signals:
     void vehicleEpochChanged();
     void sourceChanged();
     void configStatusChanged();
+    void aiVisionControlChanged();
     void commandAckReceived(int command, int result);
     void mavlinkLogMessage(const QString& category, const QString& direction, const QString& message, int severity);
 
@@ -163,6 +177,7 @@ private slots:
     void _updateStaleStates();
     void _configTimedOut();
     void _confirmationTimedOut();
+    void _sendAiVisionControl();
 
 private:
     struct MessageState
@@ -174,6 +189,7 @@ private:
 
     static constexpr int kStaleTimeoutMs = 5000;
     static constexpr int kStaleCheckIntervalMs = 1000;
+    static constexpr int kAiVisionControlIntervalMs = 1000;
 
     bool _acceptSource(const mavlink_message_t& message, bool requireActiveVehicle);
     void _processMessage(const mavlink_message_t& message);
@@ -192,6 +208,7 @@ private:
     QTimer _staleTimer;
     QTimer _configTimer;
     QTimer _confirmationTimer;
+    QTimer _aiVisionControlTimer;
     CompanionConfigService _configService;
 
     QVariantMap _links;
@@ -219,5 +236,8 @@ private:
     int _expectedSiyiBaud = 0;
     QString _configStatus = QStringLiteral("Idle");
     QString _configMessage;
+    bool _boundingBoxEnabled = false;
+    bool _trackingEnabled = false;
+    bool _followingEnabled = false;
     class CompanionLogService* _logService = nullptr;
 };

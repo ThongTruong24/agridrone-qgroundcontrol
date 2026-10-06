@@ -15,6 +15,8 @@ set(QGC_RESOURCES ${QGC_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 qt_add_library(AgriDroneModule STATIC)
 
 set(AGRIDRONE_QML_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionButton.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml

@@ -313,7 +313,7 @@ void CompanionControllerTest::_testConfigResponses()
     service.processMessage(message, 7);
     QCOMPARE(service.state(), CompanionConfigService::State::WaitingConfirm);
     QCOMPARE(service.progress(), 75);
-    for (const auto [wireState, expectedState] : {std::pair{quint8{1}, CompanionConfigService::State::Staging},
+    for (const auto &[wireState, expectedState] : {std::pair{quint8{1}, CompanionConfigService::State::Staging},
                                                   std::pair{quint8{2}, CompanionConfigService::State::Applying},
                                                   std::pair{quint8{4}, CompanionConfigService::State::Committed},
                                                   std::pair{quint8{5}, CompanionConfigService::State::Rollback}}) {
@@ -333,6 +333,38 @@ void CompanionControllerTest::_testConfigResponses()
     service.reset();
     QCOMPARE(service.state(), CompanionConfigService::State::Unavailable);
     QVERIFY(service.lastAck().isEmpty());
+}
+
+void CompanionControllerTest::_testAiVisionStateInvariant()
+{
+    CompanionController controller;
+    QSignalSpy changedSpy(&controller, &CompanionController::aiVisionControlChanged);
+
+    QVERIFY(!controller.boundingBoxEnabled());
+    QVERIFY(!controller.trackingEnabled());
+    QVERIFY(!controller.followingEnabled());
+
+    controller.setTrackingEnabled(true);
+    controller.setFollowingEnabled(true);
+    QCOMPARE(changedSpy.count(), 0);
+    QVERIFY(!controller.trackingEnabled());
+    QVERIFY(!controller.followingEnabled());
+
+    controller.setBoundingBoxEnabled(true);
+    QVERIFY(controller.boundingBoxEnabled());
+    QVERIFY(!controller.trackingEnabled());
+    QVERIFY(!controller.followingEnabled());
+
+    controller.setTrackingEnabled(true);
+    controller.setFollowingEnabled(true);
+    QVERIFY(controller.trackingEnabled());
+    QVERIFY(controller.followingEnabled());
+
+    controller.setBoundingBoxEnabled(false);
+    QVERIFY(!controller.boundingBoxEnabled());
+    QVERIFY(!controller.trackingEnabled());
+    QVERIFY(!controller.followingEnabled());
+    QCOMPARE(changedSpy.count(), 4);
 }
 
 void CompanionVehicleLifecycleTest::_testDisconnectAndReconnectReset()
@@ -540,4 +572,68 @@ void CompanionVehicleLifecycleTest::_testQmlDraftAndSaveGuard()
     _disconnectMockLink();
     QTRY_VERIFY_WITH_TIMEOUT(!tab->property("_userInteractedFc").toBool(), 1000);
     QCOMPARE(tab->property("_selectedFcPort").toString(), QString());
+}
+
+void CompanionVehicleLifecycleTest::_testAiVisionTransmission()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    QVERIFY(vehicle());
+
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1,
+                             3000);
+
+    const auto verifyLastState = [this](quint8 boundingBox, quint8 tracking, quint8 following) {
+        mavlink_message_t message{};
+        QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL, message));
+        mavlink_cc_ai_vision_control_t control{};
+        mavlink_msg_cc_ai_vision_control_decode(&message, &control);
+        QCOMPARE(control.bounding_box, boundingBox);
+        QCOMPARE(control.tracking, tracking);
+        QCOMPARE(control.following, following);
+    };
+
+    verifyLastState(0, 0, 0);
+
+    mockLink()->clearReceivedMavlinkMessageCounts();
+    controller.setBoundingBoxEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1,
+                             1000);
+    verifyLastState(1, 0, 0);
+
+    mockLink()->clearReceivedMavlinkMessageCounts();
+    controller.setTrackingEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1,
+                             1000);
+    verifyLastState(1, 1, 0);
+
+    mockLink()->clearReceivedMavlinkMessageCounts();
+    controller.setFollowingEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1,
+                             1000);
+    verifyLastState(1, 1, 1);
+
+    mockLink()->clearReceivedMavlinkMessageCounts();
+    controller.setBoundingBoxEnabled(false);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1,
+                             1000);
+    verifyLastState(0, 0, 0);
+
+    mockLink()->clearReceivedMavlinkMessageCounts();
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 2,
+                             2500);
+    verifyLastState(0, 0, 0);
+
+    _disconnectMockLink();
+    QVERIFY(!controller.vehicleAvailable());
+    controller.setBoundingBoxEnabled(true);
+    controller.setFollowingEnabled(true);
+    QCOMPARE(controller.boundingBoxEnabled(), true);
+    QCOMPARE(controller.trackingEnabled(), false);
+    QCOMPARE(controller.followingEnabled(), true);
+
+    _connectMockLinkNoInitialConnectSequence();
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1,
+                             3000);
+    verifyLastState(1, 0, 1);
 }

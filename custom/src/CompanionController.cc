@@ -135,6 +135,10 @@ CompanionController::CompanionController(QObject* parent)
     _confirmationTimer.setSingleShot(true);
     _confirmationTimer.setInterval(kConfirmationTimeoutMs);
     (void) connect(&_confirmationTimer, &QTimer::timeout, this, &CompanionController::_confirmationTimedOut);
+    _aiVisionControlTimer.setInterval(kAiVisionControlIntervalMs);
+    _aiVisionControlTimer.setSingleShot(false);
+    (void) connect(&_aiVisionControlTimer, &QTimer::timeout, this, &CompanionController::_sendAiVisionControl);
+    _aiVisionControlTimer.start();
     (void) connect(&_configService, &CompanionConfigService::changed, this, &CompanionController::configStatusChanged);
 
     MultiVehicleManager* const multiVehicleManager = MultiVehicleManager::instance();
@@ -179,11 +183,72 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
             emit vehicleEpochChanged();
             emit vehicleAvailableChanged();
         });
+        _sendAiVisionControl();
     }
 
     if (wasAvailable != vehicleAvailable()) {
         emit vehicleAvailableChanged();
     }
+}
+
+void CompanionController::setBoundingBoxEnabled(bool enabled)
+{
+    if (_boundingBoxEnabled == enabled) {
+        return;
+    }
+
+    _boundingBoxEnabled = enabled;
+    if (!enabled) {
+        _trackingEnabled = false;
+        _followingEnabled = false;
+    }
+    emit aiVisionControlChanged();
+    _sendAiVisionControl();
+}
+
+void CompanionController::setTrackingEnabled(bool enabled)
+{
+    if ((enabled && !_boundingBoxEnabled) || (_trackingEnabled == enabled)) {
+        return;
+    }
+
+    _trackingEnabled = enabled;
+    emit aiVisionControlChanged();
+    _sendAiVisionControl();
+}
+
+void CompanionController::setFollowingEnabled(bool enabled)
+{
+    if ((enabled && !_boundingBoxEnabled) || (_followingEnabled == enabled)) {
+        return;
+    }
+
+    _followingEnabled = enabled;
+    emit aiVisionControlChanged();
+    _sendAiVisionControl();
+}
+
+void CompanionController::_sendAiVisionControl()
+{
+    if (!_activeVehicle) {
+        return;
+    }
+
+    const auto link = _activeVehicle->vehicleLinkManager()->primaryLink().lock();
+    if (!link) {
+        return;
+    }
+
+    mavlink_cc_ai_vision_control_t payload{};
+    payload.bounding_box = _boundingBoxEnabled ? 1 : 0;
+    payload.tracking = _trackingEnabled ? 1 : 0;
+    payload.following = _followingEnabled ? 1 : 0;
+
+    mavlink_message_t message{};
+    mavlink_msg_cc_ai_vision_control_encode_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                                 MAVLinkProtocol::getComponentId(), link->mavlinkChannel(), &message,
+                                                 &payload);
+    (void) _activeVehicle->sendMessageOnLinkThreadSafe(link.get(), message);
 }
 
 void CompanionController::_mavlinkMessageReceived(const mavlink_message_t& message)
