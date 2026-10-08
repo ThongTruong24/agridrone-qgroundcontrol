@@ -12,6 +12,8 @@
 #include "ITelemetryHandler.h"
 #include "Vehicle.h"
 
+class Fact;
+
 struct CCParamMeta {
     QString name;
     QString label;
@@ -26,6 +28,9 @@ struct CCParamMeta {
     bool hasRange = false;
     QString units;
     bool requiresReboot = false;
+    bool readOnly = false;
+    bool isSecret = false;
+    QString applyMode;       // "staged", "live", "boot_only"
 };
 
 /**
@@ -59,8 +64,23 @@ public:
     void resetParameter(const QString& name);
     void resetToDefault(const QString& name);
     void resetAllModified();
-    void saveModifiedParameters(Vehicle* vehicle);
+    /// Sends PARAM_EXT_SET for every modified parameter and returns the names it sent (their ACKs arrive via parameterSaved).
+    QStringList saveModifiedParameters(Vehicle* vehicle);
+    /// Parameters the CC has not yet reported; read one by one after a LIST because the CC omits what it cannot read.
+    void readMissing(Vehicle* vehicle);
+    int syncedCount() const;
+    bool isModified(const QString& name) const { return _isModified.value(name, false); }
+    QStringList allFactNames() const { return _order; }
+    QVariant stagedValue(const QString& name) const { return _stagedValues.value(name); }
+    QString stagedText(const QString& name) const { return _meta.value(name).isSecret ? QStringLiteral("<hidden>") : _stagedValues.value(name).toString(); }
+    /// ConfigManager subsystem that needs an APPLY command for this staged parameter (1 links, 3 hotspot); 0 = takes effect on SET.
+    int stagedSubsystem(const QString& name) const;
+    /// Facts for the Parameters editor, in catalog order. Edits made on them are staged here.
+    QList<Fact*> allFacts() const;
     void sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value);
+
+    Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
+    QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
 
     bool exportParameters(const QString& filePath);
     bool importParameters(const QString& filePath);
@@ -78,6 +98,8 @@ private slots:
 
 private:
     void _loadTemplate();
+    void _syncFacts();
+    QMap<QString, Fact*> _facts;
     void _updateModifiedCount();
     QVariant _decodeValue(const char* raw, uint8_t type) const;
     void _encodeValue(const QVariant& val, uint8_t type, char* outRaw) const;
@@ -98,4 +120,5 @@ private:
     // Current / staged values edited in QGC UI
     QMap<QString, QVariant> _stagedValues;
     QMap<QString, bool> _isModified;
+    QMap<QString, bool> _isPending;
 };

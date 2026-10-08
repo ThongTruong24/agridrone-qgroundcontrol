@@ -8,11 +8,14 @@
 CompanionLinksService::CompanionLinksService(QObject* parent)
     : QObject(parent)
 {
+    _clock.start();
     resetState();
 }
 
 void CompanionLinksService::resetState()
 {
+    _indexedLinks.clear();
+    _receivedAt.clear();
     _hasLinksTelemetry = false;
     _fcBaud = 0;
     _siyiBaud = 0;
@@ -67,10 +70,24 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
     mavlink_msg_cc_serial_link_decode(&message, &lnk);
 
     _hasLinksTelemetry = true;
-    QString linkName = QString::fromUtf8(lnk.name, qstrnlen(lnk.name, sizeof(lnk.name))).trimmed().toUpper();
+    QString linkName = QString::fromUtf8(lnk.name, qstrnlen(lnk.name, sizeof(lnk.name))).trimmed();
     QString portStr = QString::fromUtf8(lnk.port, qstrnlen(lnk.port, sizeof(lnk.port))).trimmed();
 
-    if (linkName == QStringLiteral("FC") || lnk.link_index == 0) {
+    _indexedLinks[lnk.link_index] = {{"index", lnk.link_index}, {"name", linkName}, {"port", portStr},
+        {"status", lnk.status}, {"baudrate", lnk.baudrate}, {"txRate", lnk.tx_rate}, {"rxRate", lnk.rx_rate}};
+    _receivedAt[lnk.link_index] = _clock.elapsed();
+
+    // Drop links the Companion no longer reports (link_count shrank).
+    for (auto it = _indexedLinks.begin(); lnk.link_count > 0 && it != _indexedLinks.end();) {
+        if (it.key() >= lnk.link_count) {
+            _receivedAt.remove(it.key());
+            it = _indexedLinks.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (lnk.link_index == 0) {
         _fcBaud = static_cast<int>(lnk.baudrate);
         _fcPort = portStr;
         _fcStatus = lnk.status;
@@ -91,7 +108,7 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
                              _fcStatus == 2 ? 6 : 4);
             _prevFcStatus = _fcStatus;
         }
-    } else if (linkName == QStringLiteral("SIYI") || lnk.link_index == 1) {
+    } else if (lnk.link_index == 1) {
         _siyiBaud = static_cast<int>(lnk.baudrate);
         _siyiPort = portStr;
         _siyiStatus = lnk.status;
@@ -116,15 +133,25 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
     }
 
     if (!portStr.isEmpty()) {
-        QString fullPath = portStr.startsWith("/dev/") ? portStr : ("/dev/" + portStr);
-        if (!_availablePorts.contains(fullPath)) {
-            _availablePorts.append(fullPath);
+        if (!_availablePorts.contains(portStr)) {
+            _availablePorts.append(portStr);
             emit availablePortsChanged();
         }
     }
 
     emit linksChanged();
     return true;
+}
+
+QVariantList CompanionLinksService::serialLinks() const
+{
+    QVariantList result;
+    for (auto it = _indexedLinks.cbegin(); it != _indexedLinks.cend(); ++it) {
+        auto entry = it.value();
+        entry["fresh"] = _clock.elapsed() - _receivedAt.value(it.key()) <= 3500;
+        result.append(entry);
+    }
+    return result;
 }
 
 void CompanionLinksService::sendLinksConfig(Vehicle* vehicle, int fcBaud, int siyiBaud, const QString& fcPort, const QString& siyiPort)

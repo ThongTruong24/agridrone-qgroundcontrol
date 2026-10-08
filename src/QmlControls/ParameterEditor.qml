@@ -206,7 +206,7 @@ Item {
         width:              ScreenTools.defaultFontPixelWidth * 25
         anchors.top:        tabBar.bottom
         anchors.topMargin:  _margins
-        anchors.bottom:     parent.bottom
+        anchors.bottom:     externalActions.visible ? externalActions.top : parent.bottom
         clip:               true
         pixelAligned:       true
         contentHeight:      groupedViewCategoryColumn.height
@@ -326,7 +326,7 @@ Item {
         id:                 tableView
         anchors.leftMargin: ScreenTools.defaultFontPixelWidth
         anchors.top:        headerView.bottom
-        anchors.bottom:     parent.bottom
+        anchors.bottom:     externalActions.visible ? externalActions.top : parent.bottom
         anchors.left:       _searchFilter ? parent.left : groupScroll.right
         anchors.right:      parent.right
         columnSpacing:      0
@@ -450,5 +450,16 @@ Item {
                 }
             }
         }
+    }
+    /// Optional plugin-provided actions (e.g. apply staged companion computer parameters). The loaded item
+    /// exposes `shown` (bool) to say when it needs the bottom strip.
+    Loader {
+        id:             externalActions
+        anchors.left:   parent.left
+        anchors.right:  parent.right
+        anchors.bottom: parent.bottom
+        active:         controller.externalActionsUrl.toString() !== ""
+        source:         controller.externalActionsUrl
+        visible:        status === Loader.Ready && item && item.shown
     }
 }

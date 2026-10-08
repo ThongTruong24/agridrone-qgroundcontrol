@@ -16,11 +16,11 @@ void copyField(char (&target)[Size], const char* source)
 }
 
 mavlink_message_t packLink(uint8_t system, uint8_t component, const char* name, uint8_t index,
-                           uint32_t baud, const char* port, uint8_t status)
+                           uint32_t baud, const char* port, uint8_t status, uint8_t count = 4)
 {
     mavlink_cc_serial_link_t packet{};
     packet.link_index = index;
-    packet.link_count = 2;
+    packet.link_count = count;
     packet.baudrate = baud;
     packet.status = status;
     copyField(packet.name, name);
@@ -91,4 +91,31 @@ void CompanionLinksServiceTest::_testResetStateClears()
     QVERIFY(service.siyiPort().isEmpty());
     QCOMPARE(service.transportProtocol(), QStringLiteral("Serial / UART"));
     QVERIFY(linksSpy.count() >= 1);
+}
+
+void CompanionLinksServiceTest::_testIndexedNames()
+{
+    CompanionLinksService service;
+    QVERIFY(service.handleMavlinkMessage(packLink(42, 191, "FC", 1, 115200, "/dev/portB", 2)));
+    QVERIFY(service.handleMavlinkMessage(packLink(42, 191, "FC", 0, 921600, "/dev/portA", 2)));
+    QVERIFY(service.handleMavlinkMessage(packLink(42, 191, "Extra", 3, 57600, "/dev/extra", 2)));
+    QCOMPARE(service.fcPort(), QString("/dev/portA"));
+    QCOMPARE(service.siyiPort(), QString("/dev/portB"));
+    auto links = service.serialLinks();
+    QCOMPARE(links.size(), 3);
+    QCOMPARE(links[1].toMap()["name"].toString(), QString("FC"));
+    QCOMPARE(links[2].toMap()["index"].toInt(), 3);
+}
+
+void CompanionLinksServiceTest::_testDropsLinksBeyondReportedCount()
+{
+    CompanionLinksService service;
+    QVERIFY(service.handleMavlinkMessage(packLink(42, 191, "FC", 0, 921600, "/dev/ttyFC", 2, 2)));
+    QVERIFY(service.handleMavlinkMessage(packLink(42, 191, "SIYI", 1, 115200, "/dev/ttySIYI", 2, 2)));
+    QCOMPARE(service.serialLinks().size(), 2);
+
+    // Companion now reports a single link: the stale second entry must disappear.
+    QVERIFY(service.handleMavlinkMessage(packLink(42, 191, "FC", 0, 921600, "/dev/ttyFC", 2, 1)));
+    QCOMPARE(service.serialLinks().size(), 1);
+    QCOMPARE(service.serialLinks().first().toMap()["index"].toInt(), 0);
 }

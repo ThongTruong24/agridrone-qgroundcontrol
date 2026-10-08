@@ -1,6 +1,11 @@
 #pragma once
 
+#include <QtCore/QMap>
+#include <QtCore/QSet>
+
 #include <QtCore/QObject>
+#include <QtCore/QElapsedTimer>
+#include <optional>
 #include <QtCore/QString>
 #include <QtCore/QPointer>
 #include <QtCore/QVariantList>
@@ -21,6 +26,12 @@
 class CompanionController : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantMap cameraStreamState READ cameraStreamState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap visionStreamState READ visionStreamState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap hotspotState READ hotspotState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantList serialLinks READ serialLinks NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap companionState READ companionState NOTIFY toolbarStateChanged)
+
     QML_ELEMENT
     QML_SINGLETON
     friend class CompanionControllerTest;
@@ -33,6 +44,9 @@ class CompanionController : public QObject
     Q_PROPERTY(bool ccParametersLoading READ ccParametersLoading NOTIFY ccParametersLoadingChanged)
     Q_PROPERTY(int ccModifiedParamCount READ ccModifiedParamCount NOTIFY ccModifiedParamCountChanged)
     Q_PROPERTY(QStringList ccParameterGroups READ ccParameterGroups NOTIFY ccParameterGroupsChanged)
+    // Step-by-step result of the Parameters editor "Apply": state is idle | running | success | failed.
+    Q_PROPERTY(QStringList editorApplyLog READ editorApplyLog NOTIFY editorApplyChanged)
+    Q_PROPERTY(QString editorApplyState READ editorApplyState NOTIFY editorApplyChanged)
 
     // Telemetry Received Flags
     Q_PROPERTY(bool hasCameraTelemetry READ hasCameraTelemetry NOTIFY cameraChanged)
@@ -167,7 +181,7 @@ class CompanionController : public QObject
 
 public:
     explicit CompanionController(QObject* parent = nullptr);
-    ~CompanionController() override = default;
+    ~CompanionController() override;
 
     bool vehicleConnected() const;
 
@@ -341,6 +355,12 @@ public:
     Q_INVOKABLE void resetAllModifiedCcParameters() {
         if (_paramService) _paramService->resetAllModified();
     }
+    /// Parameters editor "Apply": sends every modified parameter, then APPLY for the staged subsystems (links/hotspot)
+    /// once the CC has ACKed all of them. Nothing is applied if the CC rejects or does not answer any write.
+    Q_INVOKABLE void applyModifiedCcParameters();
+    Q_INVOKABLE void dismissEditorApply();
+    QStringList editorApplyLog() const { return _editorApplyLog; }
+    QString editorApplyState() const { return _editorApplyState; }
     Q_INVOKABLE void saveModifiedCcParameters() {
         if (_paramService) _paramService->saveModifiedParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
     }
@@ -351,6 +371,18 @@ public:
     // Audit Log (delegated to CompanionLogService)
     Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;
     Q_INVOKABLE void clearLogHistory(const QString& category = QString());
+
+    QVariantMap cameraStreamState() const { return streamState("camera"); }
+    QVariantMap visionStreamState() const { return streamState("vision"); }
+    QVariantMap hotspotState() const;
+    QVariantMap companionState() const;
+    QVariantList serialLinks() const { return _linksService->serialLinks(); }
+    Q_INVOKABLE bool setStreamParameter(const QString& stream, const QString& id, const QVariant& value);
+    Q_INVOKABLE bool setStreamEnabled(const QString& stream, bool enabled);
+    Q_INVOKABLE bool connectStream(const QString& stream, const QString& url);
+    Q_INVOKABLE bool disconnectStream(const QString& stream);
+    Q_INVOKABLE bool setLinkBaud(int index, int baud);
+    Q_INVOKABLE bool applyHotspot(const QVariantMap& draft);
 
     // Test-time introspection helpers (available in all builds via friendship)
     bool vehicleAvailable() const { return _activeVehicle != nullptr; }
@@ -388,6 +420,7 @@ public:
 
 
 signals:
+    void toolbarStateChanged();
     void vehicleConnectedChanged();
     void cameraChanged();
     void visionChanged();
@@ -398,6 +431,7 @@ signals:
     void ccParametersLoadingChanged();
     void ccModifiedParamCountChanged();
     void ccParameterGroupsChanged();
+    void editorApplyChanged();
     void configStatusChanged();
     void vehicleEpochChanged();
     void vehicleAvailableChanged();
@@ -418,10 +452,59 @@ private:
     void _clearTelemetryState();
     void _checkTelemetryConfirmation();
 
+    QVariantMap streamState(const QString& stream) const;
+    bool beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem = 0);
+    void advanceToolbarOperation();
+    void checkToolbarEffect();
+    void toolbarTimedOut();
+    void finishToolbarOperation(const QString& error = QString());
+    void toolbarParameterSaved(const QString& name, bool success);
+    QElapsedTimer _toolbarClock;
+    QMap<QString, qint64> _toolbarReceived;
+    QMap<QString, QVariantMap> _streamTelemetry;
+    int _networkConfigVersion{0};
+    int _apPrefixLength{0};
+    bool _apDhcpEnabled{false};
+    QString _companionName;
+    struct ToolbarOperation {
+        QString group;
+        QList<QPair<QString, QVariant>> values;
+        QMap<QString, QVariant> previous;
+        QString awaiting;
+        int next{0};
+        int subsystem{0};
+        bool waitingCommand{false};
+        bool rollingBack{false};
+        bool waitingEffect{false};
+        qint64 effectAfter{0};
+        QString rollbackError;
+        QMap<QString, QVariant> effectCandidate;
+        int epoch{0};
+    };
+    std::optional<ToolbarOperation> _toolbarOperation;
+    QTimer* _toolbarOperationTimer{nullptr};
+    QMap<QString, QString> _toolbarErrors;
+
     // SOLID Services
     CompanionLogService* _logService = nullptr;
     CompanionLinksService* _linksService = nullptr;
     CompanionParamService* _paramService = nullptr;
+    // Parameters-editor apply in flight: writes still awaiting an ACK, then the staged subsystems to APPLY one by one,
+    // then a readback of what was written.
+    QSet<QString> _editorApplyAwaiting;
+    QMap<QString, QVariant> _editorApplyExpected;
+    QList<int> _editorApplyQueue;
+    bool _editorApplyCommandInFlight = false;
+    bool _editorApplyFailed = false;
+    QStringList _editorApplyLog;
+    QString _editorApplyState = QStringLiteral("idle");
+    QTimer* _ccSyncTimer = nullptr;
+    void _editorLog(const QString& line, const char* state = nullptr);
+    void _editorApplyParameterSaved(const QString& name, bool success, const QString& message);
+    void _editorApplyNextCommand();
+    void _editorApplyCommandAck(uint8_t result);
+    void _editorApplyVerify();
+    void _editorApplyReset();
     CompanionMavlinkDispatcher* _dispatcher = nullptr;
 
     QPointer<Vehicle> _activeVehicle;

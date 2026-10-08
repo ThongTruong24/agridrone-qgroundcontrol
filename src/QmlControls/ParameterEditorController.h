@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
+
 #include <QtCore/QObject>
+#include <QtCore/QUrl>
 #include <QtCore/QSet>
 #include <QtQmlIntegration/QtQmlIntegration>
 
@@ -136,6 +139,7 @@ class ParameterEditorController : public FactPanelController
     Q_PROPERTY(bool                 showFavoritesOnly       MEMBER _showFavoritesOnly                                   NOTIFY showFavoritesOnlyChanged)
     Q_PROPERTY(bool                 hideReadOnly            MEMBER _hideReadOnly                                        NOTIFY hideReadOnlyChanged)
     Q_PROPERTY(QStringList          favoriteParameterNames  READ favoriteParameterNames                                 NOTIFY favoritesChanged)
+    Q_PROPERTY(QUrl                 externalActionsUrl      READ externalActionsUrl                                     CONSTANT)
 
     // These property are related to the diff associated with a load from file
     Q_PROPERTY(bool                 diffOtherVehicle        READ diffOtherVehicle                                       NOTIFY diffOtherVehicleChanged)
@@ -150,6 +154,11 @@ class ParameterEditorController : public FactPanelController
     Q_PROPERTY(QStringList          diffMissingParams       READ diffMissingParams                                      NOTIFY diffMissingParamsChanged)
 
 public:
+    /// Lets a plugin add parameters that do not come from the vehicle's ParameterManager (e.g. a companion computer).
+    /// Their metadata category/group decide where they appear; actionsQml is an optional bar shown under the table.
+    using ExternalFactsProvider = std::function<QList<Fact*>()>;
+    static void setExternalFactsProvider(ExternalFactsProvider provider, const QUrl &actionsQml = QUrl());
+    QUrl externalActionsUrl() const;
     explicit ParameterEditorController(QObject *parent = nullptr);
     ~ParameterEditorController();
 
@@ -207,6 +216,7 @@ private slots:
     void _hideReadOnlyChanged   (void);
     void _buildLists            (void);
     void _buildListsForComponent(int compId);
+    void _addFactToLists(Fact *fact, int compId);
     void _factAdded             (int compId, Fact* fact);
 
 private:

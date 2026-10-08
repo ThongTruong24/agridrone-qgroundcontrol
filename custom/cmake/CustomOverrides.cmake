@@ -8,24 +8,11 @@ set(QGC_DISABLE_PX4_PLUGIN_FACTORY ON CACHE BOOL "Disable PX4 Plugin Factory" FO
 
 # If Drone_MAVLink exists as a sibling directory (in THACO_Drone meta-repo),
 # use it directly to ensure zero network latency and 100% local synchronization.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Drone_MAVLink/CMakeLists.txt")
-    set(CPM_mavlink_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../Drone_MAVLink" CACHE PATH "Path to local MAVLink source" FORCE)
-    message(STATUS "QGC: Using local MAVLink submodule at: ${CPM_mavlink_SOURCE}")
-else()
-    set(
-        QGC_MAVLINK_GIT_REPO
-        "https://github.com/ThongTruong24/agridrone-mavlink.git"
-        CACHE STRING "THACO custom MAVLink repository"
-        FORCE
-    )
-
-    set(
-        QGC_MAVLINK_GIT_TAG
-        "181947bb1c76f53076b29a0298f2238a37bb91a4"
-        CACHE STRING "THACO custom MAVLink revision"
-        FORCE
-    )
+set(THACO_ROOT "${CMAKE_SOURCE_DIR}/.." CACHE PATH "THACO_Drone meta-repository")
+if(NOT EXISTS "${THACO_ROOT}/cmake/THACOMAVLink.cmake")
+    message(FATAL_ERROR "Build this custom QGC inside THACO_Drone, or set THACO_ROOT to its checkout")
 endif()
+set(QGC_THACO_MAVLINK ON)
 
 set(
     QGC_MAVLINK_DIALECT

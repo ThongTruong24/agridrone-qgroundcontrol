@@ -27,7 +27,7 @@ enforced by pre-commit hooks, so ignoring them wastes a build cycle. Full list w
 - **No `Q_ASSERT` in production code** — use defensive checks with early returns (`check-no-qassert`).
 - **No `QTest::ignoreMessage`** in tests — use `expectLogMessage`/`ignoreLogMessage` (`check-no-qtest-ignore-message`).
 - **No fixed-delay `QTest::qWait(<n>)`** — use `QTRY_*_WITH_TIMEOUT` or `QSignalSpy::wait` (`check-no-fixed-qwait`).
-- **MAVLink Single Source of Truth** — All MAVLink message definitions MUST be edited ONLY at `/home/lnh/Mavlink/custom/thaco_common.xml`. NEVER edit generated headers under `build/` or `custom/mavlink/` directly. Always run `/home/lnh/Mavlink/sync_all.sh` to update QGC.
+- **MAVLink Single Source of Truth** — Edit custom definitions only in `Drone_MAVLink/message_definitions/v1.0/thaco.xml` in the THACO_Drone meta-repository. QGC build calls the shared `sync_mavlink.py` to generate into its own build directory before compile. Never edit generated headers or run the legacy `/home/lnh/Mavlink/sync_all.sh` for this checkout. See `../README.md`; build outside the meta-repository requires `THACO_ROOT`.
 
 ## Critical Files (Read First!)
 

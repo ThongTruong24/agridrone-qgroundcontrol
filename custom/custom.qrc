@@ -2,6 +2,12 @@
     <qresource prefix="/custom/images">
         <file alias="control_actuator.png">res/Custom/Images/control_actuator.png</file>
         <file alias="logo_i.png">res/Custom/Images/logo_i.png</file>
+        <file alias="camera.png">resources/camera/camera.png</file>
+        <file alias="companion.png">resources/companion/edge-computing.png</file>
+        <file alias="edge-computing.png">resources/companion/edge-computing.png</file>
+        <file alias="vision.png">resources/vision/computer-vision.png</file>
+        <file alias="computer-vision.png">resources/vision/computer-vision.png</file>
+        <file alias="system-update.png">resources/system-update.png</file>
     </qresource>
     <qresource prefix="/custom/params">
         <file alias="cc_parameters.json">res/cc_parameters.json</file>

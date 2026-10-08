@@ -1,4 +1,7 @@
 #include "CompanionParamService.h"
+
+#include <QtCore/QPointer>
+#include "Fact.h"
 #include "MAVLinkProtocol.h"
 #include "MultiVehicleManager.h"
 #include "LinkManager.h"
@@ -25,6 +28,45 @@ CompanionParamService::CompanionParamService(QObject* parent)
     connect(_loadingTimeoutTimer, &QTimer::timeout, this, &CompanionParamService::_onLoadingTimeout);
 
     _loadTemplate();
+    _syncFacts();
+    connect(this, &CompanionParamService::paramListChanged, this, &CompanionParamService::_syncFacts);
+}
+
+void CompanionParamService::_syncFacts()
+{
+    for (auto it = _meta.cbegin(); it != _meta.cend(); ++it) {
+        const auto &m = it.value();
+        if (!_facts.contains(it.key())) {
+            auto type = FactMetaData::valueTypeString;
+            if (m.type == MAV_PARAM_EXT_TYPE_UINT32) type = FactMetaData::valueTypeUint32;
+            else if (m.type == MAV_PARAM_EXT_TYPE_UINT8) type = FactMetaData::valueTypeUint8;
+            else if (m.type == MAV_PARAM_EXT_TYPE_INT32) type = FactMetaData::valueTypeInt32;
+            else if (m.type == MAV_PARAM_EXT_TYPE_REAL32) type = FactMetaData::valueTypeFloat;
+            auto fact = new Fact(kCompanionComponentId, it.key(), type, this);
+            auto metadata = new FactMetaData(type, it.key(), fact);
+            metadata->setShortDescription(m.label);
+            metadata->setLongDescription(m.description);
+            metadata->setCategory(QStringLiteral("Developer"));
+            metadata->setGroup(m.group);
+            metadata->setReadOnly(m.readOnly);
+            metadata->setRawUnits(m.units);
+            if (m.hasRange) { metadata->setRawMin(m.minVal); metadata->setRawMax(m.maxVal); }
+            QVariantList values;
+            for (const auto &option : m.options) values.append(type == FactMetaData::valueTypeString ? QVariant(option) : QVariant(option.toDouble()));
+            metadata->setEnumInfo(m.options, values);
+            fact->setMetaData(metadata);
+            _facts[it.key()] = fact;
+            // The Parameters editor writes through the Fact: that is a staged edit, applied by the editor's Apply bar.
+            connect(fact, &Fact::containerRawValueChanged, this, [this, name = it.key()](const QVariant& value) {
+                stageParameter(name, value);
+            });
+        }
+        // Show the staged edit while there is one, otherwise what the CC last confirmed. Secrets are never shown.
+        const bool modified = _isModified.value(it.key());
+        if (!m.isSecret && (modified || _isLiveSynced.value(it.key()))) {
+            _facts[it.key()]->containerSetRawValue(modified ? _stagedValues.value(it.key()) : _liveValues.value(it.key()));
+        }
+    }
 }
 
 void CompanionParamService::_loadTemplate()
@@ -77,11 +119,17 @@ void CompanionParamService::_loadTemplate()
                 meta.description = pObj.value("description").toString();
                 meta.units = pObj.value("units").toString();
                 meta.requiresReboot = pObj.value("reboot").toBool(false);
+                meta.readOnly = pObj.value("readOnly").toBool(false);
+                meta.isSecret = pObj.value("secret").toBool(false);
+                meta.applyMode = pObj.value("applyMode").toString("staged");
                 meta.typeStr = pObj.value("type").toString("string");
 
                 if (meta.typeStr == "uint32") {
                     meta.type = MAV_PARAM_EXT_TYPE_UINT32;
                     meta.defaultValue = static_cast<quint32>(pObj.value("default").toInt());
+                } else if (meta.typeStr == "uint8") {
+                    meta.type = MAV_PARAM_EXT_TYPE_UINT8;
+                    meta.defaultValue = static_cast<uint8_t>(pObj.value("default").toInt());
                 } else if (meta.typeStr == "int32") {
                     meta.type = MAV_PARAM_EXT_TYPE_INT32;
                     meta.defaultValue = pObj.value("default").toInt();
@@ -114,6 +162,7 @@ void CompanionParamService::_loadTemplate()
                 _stagedValues[meta.name] = meta.defaultValue;
                 _isModified[meta.name] = false;
                 _isLiveSynced[meta.name] = false;
+                _isPending[meta.name] = false;
 
                 if (!_groups.contains(meta.group)) {
                     _groups.append(meta.group);
@@ -122,19 +171,35 @@ void CompanionParamService::_loadTemplate()
         }
     }
 
-    // Safety fallback if file loading failed
+    // Safety fallback if file loading failed (named links)
     if (_meta.isEmpty()) {
-        CCParamMeta fcp;
-        fcp.name = "CC_FC_PORT"; fcp.label = "FC Serial Port"; fcp.group = "Telemetry"; fcp.type = MAV_PARAM_EXT_TYPE_CUSTOM;
-        fcp.typeStr = "string"; fcp.defaultValue = "/dev/ttyTHS1"; fcp.description = "UART connected to FC";
-        _order.append(fcp.name); _meta[fcp.name] = fcp; _stagedValues[fcp.name] = fcp.defaultValue;
+        CCParamMeta l0p;
+        l0p.name = "CC_L0_PORT"; l0p.label = "Link 0 Port"; l0p.group = "Telemetry"; l0p.type = MAV_PARAM_EXT_TYPE_CUSTOM;
+        l0p.typeStr = "string"; l0p.defaultValue = "/dev/ttyAMA4"; l0p.description = "Serial link 0 device node";
+        l0p.applyMode = "staged";
+        _order.append(l0p.name); _meta[l0p.name] = l0p; _stagedValues[l0p.name] = l0p.defaultValue;
 
-        CCParamMeta fcb;
-        fcb.name = "CC_FC_BAUD"; fcb.label = "FC Baudrate"; fcb.group = "Telemetry"; fcb.type = MAV_PARAM_EXT_TYPE_UINT32;
-        fcb.typeStr = "uint32"; fcb.defaultValue = 921600; fcb.units = "bps";
-        fcb.options = {"57600", "115200", "230400", "460800", "921600", "1500000"};
-        fcb.description = "Baudrate for FC link";
-        _order.append(fcb.name); _meta[fcb.name] = fcb; _stagedValues[fcb.name] = fcb.defaultValue;
+        CCParamMeta l0b;
+        l0b.name = "CC_L0_BAUD"; l0b.label = "Link 0 Baudrate"; l0b.group = "Telemetry"; l0b.type = MAV_PARAM_EXT_TYPE_UINT32;
+        l0b.typeStr = "uint32"; l0b.defaultValue = 921600; l0b.units = "bps";
+        l0b.options = {"9600", "57600", "115200", "230400", "460800", "921600", "1500000"};
+        l0b.description = "Serial link 0 baud rate";
+        l0b.applyMode = "staged";
+        _order.append(l0b.name); _meta[l0b.name] = l0b; _stagedValues[l0b.name] = l0b.defaultValue;
+
+        CCParamMeta l1p;
+        l1p.name = "CC_L1_PORT"; l1p.label = "Link 1 Port"; l1p.group = "Telemetry"; l1p.type = MAV_PARAM_EXT_TYPE_CUSTOM;
+        l1p.typeStr = "string"; l1p.defaultValue = "/dev/ttyAMA0"; l1p.description = "Serial link 1 device node";
+        l1p.applyMode = "staged";
+        _order.append(l1p.name); _meta[l1p.name] = l1p; _stagedValues[l1p.name] = l1p.defaultValue;
+
+        CCParamMeta l1b;
+        l1b.name = "CC_L1_BAUD"; l1b.label = "Link 1 Baudrate"; l1b.group = "Telemetry"; l1b.type = MAV_PARAM_EXT_TYPE_UINT32;
+        l1b.typeStr = "uint32"; l1b.defaultValue = 115200; l1b.units = "bps";
+        l1b.options = {"9600", "57600", "115200", "230400", "460800", "921600"};
+        l1b.description = "Serial link 1 baud rate";
+        l1b.applyMode = "staged";
+        _order.append(l1b.name); _meta[l1b.name] = l1b; _stagedValues[l1b.name] = l1b.defaultValue;
 
         _groups = {"Telemetry", "Camera", "Vision", "Network"};
     }
@@ -154,6 +219,7 @@ void CompanionParamService::resetState()
     for (const QString& name : _order) {
         _isLiveSynced[name] = false;
         _isModified[name] = false;
+        _isPending[name] = false;
         _stagedValues[name] = _meta[name].defaultValue;
     }
 
@@ -185,11 +251,16 @@ QVariantList CompanionParamService::paramList() const
 
         bool liveSynced = _isLiveSynced.value(name, false);
         map["isLiveSynced"] = liveSynced;
+        map["isAvailable"] = liveSynced;
         map["liveValue"] = liveSynced ? _liveValues.value(name) : QStringLiteral("--");
 
         // Current value shown in editor
         map["value"] = _stagedValues.value(name, m.defaultValue);
         map["isModified"] = _isModified.value(name, false);
+        map["isPending"] = _isPending.value(name, false);
+        map["readOnly"] = m.readOnly;
+        map["secret"] = m.isSecret;
+        map["applyMode"] = m.applyMode;
 
         list.append(map);
     }
@@ -251,11 +322,14 @@ void CompanionParamService::requestParameters(Vehicle* vehicle)
 
     vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_LIST sent to Comp %1").arg(kCompanionComponentId), 6);
+    // The CC leaves out parameters it cannot read at this moment; ask for those individually once the LIST is done.
+    QTimer::singleShot(4000, this, [this, vehiclePtr = QPointer<Vehicle>(vehicle)]() { readMissing(vehiclePtr); });
 }
 
 void CompanionParamService::stageParameter(const QString& name, const QVariant& value)
 {
     if (!_meta.contains(name)) return;
+    if (_meta[name].readOnly) return;
 
     _stagedValues[name] = value;
 
@@ -299,35 +373,63 @@ void CompanionParamService::resetAllModified()
     emit paramListChanged();
 }
 
-void CompanionParamService::saveModifiedParameters(Vehicle* vehicle)
+QStringList CompanionParamService::saveModifiedParameters(Vehicle* vehicle)
 {
+    QStringList sent;
     if (!vehicle) {
         emit logMessage("PARAM", "ERR", "Cannot save CC params: Vehicle not connected", 3);
-        return;
+        return sent;
     }
 
-    int sent = 0;
     for (const QString& name : _order) {
-        if (_isModified.value(name, false)) {
+        if (_isModified.value(name, false) && !_meta[name].readOnly) {
+            const QVariant confirmed = confirmedValue(name);
+            if (!_isPending.value(name) && confirmed.isValid() && confirmed.toString() == _stagedValues.value(name).toString()) {
+                _isModified[name] = false; // the CC already has this value: nothing to write, no ACK to wait for
+                continue;
+            }
             sendSingleParamSet(vehicle, name, _stagedValues.value(name));
-            sent++;
+            sent.append(name);
         }
     }
+    _updateModifiedCount();
 
-    if (sent > 0) {
-        emit logMessage("PARAM", "TX", QString("Applying %1 modified CC parameter(s)...").arg(sent), 6);
+    if (!sent.isEmpty()) {
+        emit logMessage("PARAM", "TX", QString("Applying %1 modified CC parameter(s)...").arg(sent.size()), 6);
     }
+    return sent;
+}
+
+int CompanionParamService::stagedSubsystem(const QString& name) const
+{
+    const auto meta = _meta.constFind(name);
+    if (meta == _meta.cend() || meta->applyMode != QLatin1String("staged")) return 0;
+    if (meta->group == QLatin1String("Telemetry")) return 1;
+    if (meta->group == QLatin1String("Network")) return 3;
+    return 0;
+}
+
+QList<Fact*> CompanionParamService::allFacts() const
+{
+    QList<Fact*> facts;
+    for (const QString& name : _order) {
+        if (Fact* fact = _facts.value(name, nullptr)) facts.append(fact);
+    }
+    return facts;
 }
 
 void CompanionParamService::sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value)
 {
     if (!vehicle || !_meta.contains(name)) return;
+    if (_meta[name].readOnly) return;
+    // A lost ACK leaves a write uncertain; rollback must resend even the old readback value.
+    if (!_isPending.value(name) && confirmedValue(name).isValid() && confirmedValue(name).toString() == value.toString()) return;
 
     const auto& meta = _meta[name];
     char paramIdBuf[16];
     std::memset(paramIdBuf, 0, sizeof(paramIdBuf));
     QByteArray idBytes = name.toUtf8();
-    std::strncpy(paramIdBuf, idBytes.constData(), sizeof(paramIdBuf) - 1);
+    std::memcpy(paramIdBuf, idBytes.constData(), std::min<size_t>(idBytes.size(), 16));
 
     char valBuf[128];
     _encodeValue(value, meta.type, valBuf);
@@ -359,8 +461,9 @@ void CompanionParamService::sendSingleParamSet(Vehicle* vehicle, const QString& 
         valBuf,
         meta.type);
 
+    _isPending[name] = true;
     vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
-    emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, value.toString()), 6);
+    emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, meta.isSecret ? QStringLiteral("<hidden>") : value.toString()), 6);
 }
 
 bool CompanionParamService::exportParameters(const QString& filePath)
@@ -379,6 +482,7 @@ bool CompanionParamService::exportParameters(const QString& filePath)
 
     QJsonObject paramsObj;
     for (const QString& name : _order) {
+        if (_meta[name].isSecret) continue;
         QVariant v = _stagedValues.value(name, _meta[name].defaultValue);
         if (v.typeId() == QMetaType::Double) {
             paramsObj[name] = v.toDouble();
@@ -497,6 +601,8 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
             dynMeta.group = "Other";
             dynMeta.type = pval.param_type;
             dynMeta.defaultValue = val;
+            dynMeta.readOnly = true;
+            dynMeta.applyMode = "boot_only";
             _order.append(paramId);
             _meta[paramId] = dynMeta;
             if (!_groups.contains("Other")) {
@@ -534,17 +640,23 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
         QString paramId = QString::fromUtf8(idBuf).trimmed();
 
         QVariant ackVal = _decodeValue(pack.param_value, pack.param_type);
-        _liveValues[paramId] = ackVal;
-        _isLiveSynced[paramId] = true;
+        if (pack.param_result != PARAM_ACK_IN_PROGRESS) {
+            _liveValues[paramId] = ackVal;
+            _isLiveSynced[paramId] = true;
+        }
 
-        bool success = (pack.param_result == 0 /* PARAM_ACK_ACCEPTED */);
-        if (success) {
+        if (pack.param_result == PARAM_ACK_IN_PROGRESS) {
+            _isPending[paramId] = true;
+            emit logMessage("PARAM", "RX", QString("PARAM_EXT_ACK: %1 in progress").arg(paramId), 6);
+        } else if (pack.param_result == 0 /* PARAM_ACK_ACCEPTED */) {
+            _isPending[paramId] = false;
             _stagedValues[paramId] = ackVal;
             _isModified[paramId] = false;
             _updateModifiedCount();
             emit parameterSaved(paramId, true, QString("Parameter %1 applied successfully").arg(paramId));
-            emit logMessage("PARAM", "RX", QString("PARAM_EXT_ACK: %1 = %2 (Accepted)").arg(paramId, ackVal.toString()), 6);
+            emit logMessage("PARAM", "RX", QString("PARAM_EXT_ACK: %1 = %2 (Accepted)").arg(paramId, _meta.value(paramId).isSecret ? QStringLiteral("<hidden>") : ackVal.toString()), 6);
         } else {
+            _isPending[paramId] = false;
             emit parameterSaved(paramId, false, QString("Parameter %1 rejected by CC (code %2)").arg(paramId).arg(pack.param_result));
             emit logMessage("PARAM", "ERR", QString("PARAM_EXT_ACK: %1 rejected (code %2)").arg(paramId).arg(pack.param_result), 3);
         }
@@ -580,7 +692,7 @@ QVariant CompanionParamService::_decodeValue(const char* raw, uint8_t type) cons
         char buf[129];
         std::memcpy(buf, raw, 128);
         buf[128] = '\0';
-        return QString::fromUtf8(buf).trimmed();
+        return QString::fromUtf8(buf);
     }
     }
 }
@@ -632,4 +744,35 @@ void CompanionParamService::_encodeValue(const QVariant& val, uint8_t type, char
         break;
     }
     }
+}
+
+int CompanionParamService::syncedCount() const
+{
+    int count = 0;
+    for (auto it = _isLiveSynced.cbegin(); it != _isLiveSynced.cend(); ++it) count += it.value() ? 1 : 0;
+    return count;
+}
+
+void CompanionParamService::readMissing(Vehicle* vehicle)
+{
+    if (!vehicle) return;
+
+    SharedLinkInterfacePtr sharedLink;
+    if (vehicle->vehicleLinkManager()) sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
+    if (!sharedLink) return;
+
+    int requested = 0;
+    for (const QString& name : _order) {
+        if (_isLiveSynced.value(name) || _meta.value(name).isSecret) continue;
+        char idBuf[16] = {};
+        const QByteArray id = name.toUtf8();
+        std::memcpy(idBuf, id.constData(), std::min<size_t>(id.size(), sizeof(idBuf)));
+        mavlink_message_t msg;
+        mavlink_msg_param_ext_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
+            MAVLinkProtocol::instance()->getComponentId(), sharedLink->mavlinkChannel(), &msg,
+            static_cast<uint8_t>(vehicle->id()), kCompanionComponentId, idBuf, -1);
+        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+        ++requested;
+    }
+    if (requested) emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_READ for %1 parameter(s) missing after LIST").arg(requested), 6);
 }

@@ -214,8 +214,8 @@ ColumnLayout {
                             anchors.fill: parent
                             radius: 6
                             color: root._bgCard
-                            border.color: modelData.isModified ? root._accentOrange : root._borderColor
-                            border.width: modelData.isModified ? 2 : 1
+                            border.color: modelData.isPending ? root._accentBlue : (modelData.isModified ? root._accentOrange : root._borderColor)
+                            border.width: (modelData.isPending || modelData.isModified) ? 2 : 1
                             implicitHeight: contentRow.implicitHeight + 16
 
                             RowLayout {
@@ -265,6 +265,41 @@ ColumnLayout {
                                                 font.bold: true
                                                 font.pointSize: ScreenTools.smallFontPointSize * 0.8
                                                 color: qgcPal.text
+                                            }
+                                        }
+
+                                        // Pending Badge
+                                        Rectangle {
+                                            visible: modelData.isPending
+                                            radius: 3
+                                            color: root._accentBlue
+                                            Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 1.2
+                                            Layout.preferredWidth: pendingBadgeTxt.width + 8
+
+                                            QGCLabel {
+                                                id: pendingBadgeTxt
+                                                anchors.centerIn: parent
+                                                text: qsTr("Đang lưu...")
+                                                font.bold: true
+                                                font.pointSize: ScreenTools.smallFontPointSize * 0.8
+                                                color: qgcPal.text
+                                            }
+                                        }
+
+                                        // Read-Only Badge
+                                        Rectangle {
+                                            visible: modelData.readOnly
+                                            radius: 3
+                                            color: qgcPal.windowShadeDark
+                                            Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 1.2
+                                            Layout.preferredWidth: roBadgeTxt.width + 8
+
+                                            QGCLabel {
+                                                id: roBadgeTxt
+                                                anchors.centerIn: parent
+                                                text: qsTr("Chỉ đọc")
+                                                font.pointSize: ScreenTools.smallFontPointSize * 0.8
+                                                color: root._textMuted
                                             }
                                         }
 
@@ -323,11 +358,12 @@ ColumnLayout {
                                         id: optCombo
                                         Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 16
                                         visible: modelData.options && modelData.options.length > 0
+                                        enabled: !modelData.readOnly && !modelData.isPending
                                         model: modelData.options ? modelData.options : []
 
                                         function syncVal() {
                                             if (!model || model.length === 0) return
-                                            var cur = String(modelData.value)
+                                             var cur = String(modelData.value)
                                             var idx = model.indexOf(cur)
                                             currentIndex = (idx >= 0 ? idx : 0)
                                         }
@@ -345,6 +381,7 @@ ColumnLayout {
                                         id: txtField
                                         Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 16
                                         visible: !optCombo.visible
+                                        readOnly: modelData.readOnly || modelData.isPending
                                         text: String(modelData.value)
                                         font.family: ScreenTools.fixedFontFamily
 
@@ -356,13 +393,14 @@ ColumnLayout {
                                     // Revert button (active if modified)
                                     QGCButton {
                                         text: qsTr("Hủy")
-                                        visible: modelData.isModified
+                                        visible: modelData.isModified && !modelData.readOnly && !modelData.isPending
                                         onClicked: CompanionController.resetCcParameter(modelData.name)
                                     }
 
                                     // Reset to Default button
                                     QGCButton {
                                         text: qsTr("Mặc định")
+                                        enabled: !modelData.readOnly && !modelData.isPending
                                         onClicked: CompanionController.resetCcParameterToDefault(modelData.name)
                                     }
                                 }

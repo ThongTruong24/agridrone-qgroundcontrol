@@ -15,6 +15,12 @@ set(QGC_RESOURCES ${QGC_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 qt_add_library(AgriDroneModule STATIC)
 
 set(AGRIDRONE_QML_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CameraStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/VisionStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamStatusPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionToggleSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
@@ -30,6 +36,7 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionVisionTab.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionMissionTab.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionParametersTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionParamActions.qml
 )
 
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml

@@ -5,6 +5,9 @@
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
+#include <QtCore/QVariantList>
+#include <QtCore/QMap>
+#include <QtCore/QElapsedTimer>
 
 #include "ITelemetryHandler.h"
 #include "Vehicle.h"
@@ -22,6 +25,8 @@ public:
     // ITelemetryHandler interface
     bool handleMavlinkMessage(const mavlink_message_t& message) override;
     void resetState() override;
+
+    QVariantList serialLinks() const;
 
     // Telemetry getters
     bool hasLinksTelemetry() const { return _hasLinksTelemetry; }
@@ -103,6 +108,9 @@ signals:
     void logMessage(const QString& category, const QString& direction, const QString& message, int severity);
 
 private:
+    QElapsedTimer _clock;
+    QMap<int, QVariantMap> _indexedLinks;
+    QMap<int, qint64> _receivedAt;
     bool _hasLinksTelemetry = false;
     int _fcBaud = 0;
     int _siyiBaud = 0;

@@ -15,6 +15,8 @@ public:
 
     static QGCCorePlugin* instance();
 
+    const QVariantList& toolBarIndicators() override;
+
     QQmlApplicationEngine* createQmlApplicationEngine(QObject* parent) final;
     void destroyQmlApplicationEngine(QQmlApplicationEngine* qmlEngine) final;
 

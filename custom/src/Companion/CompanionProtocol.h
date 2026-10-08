@@ -4,6 +4,7 @@
 #include <cstddef>
 
 #include "LinkInterface.h"
+#include "MAVLinkLib.h"
 #include "QGCMAVLink.h"
 
 class Vehicle;

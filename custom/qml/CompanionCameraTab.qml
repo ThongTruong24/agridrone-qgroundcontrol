@@ -214,13 +214,15 @@ ColumnLayout {
 
             QGCButton {
                 text: qsTr("Save Defaults")
-                enabled: CompanionController.hasCameraTelemetry
+                enabled: false
+                visible: false // Hidden until Milestone B unified storage
                 onClicked: root.saveAsDefault()
             }
 
             QGCButton {
                 text: qsTr("Restore Defaults")
-                enabled: CompanionController.hasCameraTelemetry
+                enabled: false
+                visible: false // Hidden until Milestone B unified storage
                 onClicked: root.restoreDefaults()
             }
         }

@@ -26,95 +26,125 @@
     ],
     "parameters": [
         {
-            "name": "CC_FC_PORT",
+            "name": "CC_L0_NAME",
             "group": "Telemetry",
-            "label": "FC Serial Port",
+            "label": "Link 0 Name",
             "type": "string",
-            "default": "/dev/ttyTHS1",
-            "description": "UART device connected to Flight Controller Telem1/Telem2",
-            "reboot": true
+            "default": "FC",
+            "description": "Serial link 0 user-defined name",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
         },
         {
-            "name": "CC_FC_BAUD",
+            "name": "CC_L0_PORT",
             "group": "Telemetry",
-            "label": "FC Baudrate",
+            "label": "Link 0 Port",
+            "type": "string",
+            "default": "/dev/ttyAMA4",
+            "description": "Serial link 0 device node",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
+        },
+        {
+            "name": "CC_L0_BAUD",
+            "group": "Telemetry",
+            "label": "Link 0 Baudrate",
             "type": "uint32",
             "default": 921600,
             "units": "bps",
             "options": [
+                "9600",
+                "19200",
+                "38400",
                 "57600",
                 "115200",
                 "230400",
                 "460800",
+                "500000",
+                "576000",
                 "921600",
-                "1500000"
+                "1000000",
+                "1500000",
+                "2000000"
             ],
-            "description": "Baudrate for MAVLink telemetry connection to FC",
-            "reboot": true
+            "description": "Serial link 0 baud rate",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
         },
         {
-            "name": "CC_SIYI_PORT",
+            "name": "CC_L1_NAME",
             "group": "Telemetry",
-            "label": "SIYI Serial Port",
+            "label": "Link 1 Name",
             "type": "string",
-            "default": "/dev/ttyUSB0",
-            "description": "UART device connected to SIYI Air Unit Telemetry Port",
-            "reboot": true
+            "default": "SIYI",
+            "description": "Serial link 1 user-defined name",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
         },
         {
-            "name": "CC_SIYI_BAUD",
+            "name": "CC_L1_PORT",
             "group": "Telemetry",
-            "label": "SIYI Baudrate",
+            "label": "Link 1 Port",
+            "type": "string",
+            "default": "/dev/ttyAMA0",
+            "description": "Serial link 1 device node",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
+        },
+        {
+            "name": "CC_L1_BAUD",
+            "group": "Telemetry",
+            "label": "Link 1 Baudrate",
             "type": "uint32",
             "default": 115200,
             "units": "bps",
             "options": [
+                "9600",
+                "19200",
+                "38400",
                 "57600",
                 "115200",
                 "230400",
                 "460800",
-                "921600"
+                "500000",
+                "576000",
+                "921600",
+                "1000000",
+                "1500000",
+                "2000000"
             ],
-            "description": "Baudrate for telemetry transmission over SIYI radio link",
-            "reboot": true
+            "description": "Serial link 1 baud rate",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
         },
         {
-            "name": "CC_CAM_W",
-            "group": "Camera",
-            "label": "Camera Width",
-            "type": "uint32",
-            "default": 1920,
-            "units": "px",
-            "min": 640,
-            "max": 3840,
-            "options": [
-                "640",
-                "1280",
-                "1920",
-                "2560",
-                "3840"
-            ],
-            "description": "Horizontal video resolution in pixels",
-            "reboot": false
+            "name": "CC_AP_SSID",
+            "group": "Network",
+            "label": "Wi-Fi AP SSID",
+            "type": "string",
+            "default": "THACO-DRONE-AP",
+            "description": "Wi-Fi access point SSID",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
         },
         {
-            "name": "CC_CAM_H",
-            "group": "Camera",
-            "label": "Camera Height",
-            "type": "uint32",
-            "default": 1080,
-            "units": "px",
-            "min": 480,
-            "max": 2160,
-            "options": [
-                "480",
-                "720",
-                "1080",
-                "1440",
-                "2160"
-            ],
-            "description": "Vertical video resolution in pixels",
-            "reboot": false
+            "name": "CC_AP_PASS",
+            "group": "Network",
+            "label": "Wi-Fi AP Password",
+            "type": "string",
+            "default": "thaco123456",
+            "description": "Wi-Fi access point passphrase",
+            "reboot": false,
+            "readOnly": false,
+            "secret": true,
+            "applyMode": "staged"
         },
         {
             "name": "CC_CAM_FPS",
@@ -123,8 +153,8 @@
             "type": "uint32",
             "default": 30,
             "units": "fps",
-            "min": 10,
-            "max": 60,
+            "min": 1,
+            "max": 120,
             "options": [
                 "15",
                 "20",
@@ -133,134 +163,393 @@
                 "30",
                 "60"
             ],
-            "description": "Video capture frames per second",
-            "reboot": false
+            "description": "Requested camera frame rate",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
         },
         {
             "name": "CC_CAM_BR",
             "group": "Camera",
             "label": "Camera Bitrate",
             "type": "uint32",
-            "default": 4000,
+            "default": 1400,
             "units": "kbps",
-            "min": 500,
+            "min": 300,
             "max": 20000,
             "options": [
-                "1000",
+                "800",
+                "1400",
                 "2000",
                 "4000",
-                "6000",
-                "8000",
-                "12000"
+                "8000"
             ],
-            "description": "Target video encoding bitrate in kilobits per second",
-            "reboot": false
+            "description": "FPV encoder bitrate in kilobits per second",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
+        },
+        {
+            "name": "CC_CAM_FPV_EN",
+            "group": "Camera",
+            "label": "FPV Output Enable",
+            "type": "uint8",
+            "default": 1,
+            "options": [
+                "0",
+                "1"
+            ],
+            "description": "Enable the FPV output branch",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
+        },
+        {
+            "name": "CC_CAM_AI_EN",
+            "group": "Camera",
+            "label": "Camera AI Enable",
+            "type": "uint8",
+            "default": 1,
+            "options": [
+                "0",
+                "1"
+            ],
+            "description": "Enable the camera AI frame branch",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
+        },
+        {
+            "name": "CC_CAM_W",
+            "group": "Camera",
+            "label": "Camera Width",
+            "type": "uint32",
+            "default": 1280,
+            "units": "px",
+            "options": [
+                "640",
+                "1280",
+                "1920"
+            ],
+            "description": "Active camera profile width",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_CAM_H",
+            "group": "Camera",
+            "label": "Camera Height",
+            "type": "uint32",
+            "default": 720,
+            "units": "px",
+            "options": [
+                "480",
+                "720",
+                "1080"
+            ],
+            "description": "Active camera profile height",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
         },
         {
             "name": "CC_CAM_CODEC",
             "group": "Camera",
             "label": "Video Codec",
             "type": "string",
-            "default": "H264",
+            "default": "h264",
             "options": [
-                "H264",
-                "H265",
-                "MJPEG"
+                "h264",
+                "h265"
             ],
-            "description": "Compression codec for video stream",
-            "reboot": false
+            "description": "Packaged encoder codec",
+            "reboot": true,
+            "readOnly": false,
+            "applyMode": "live"
         },
         {
-            "name": "CC_VIS_MODEL",
-            "group": "Vision",
-            "label": "AI Model File",
+            "name": "CC_CAM_MODEL",
+            "group": "Camera",
+            "label": "Camera Hardware Model",
             "type": "string",
-            "default": "yolov8n.onnx",
-            "options": [
-                "yolov8n.onnx",
-                "yolov8s.onnx",
-                "crop_disease_v1.onnx",
-                "spraying_target_v2.onnx"
-            ],
-            "description": "Neural network model loaded for onboard object detection",
-            "reboot": false
+            "default": "realsense_d435i",
+            "description": "Packaged camera hardware profile",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_CAM_OPT_RES",
+            "group": "Camera",
+            "label": "Supported Resolutions",
+            "type": "string",
+            "default": "",
+            "description": "Output resolutions this camera supports (CSV, from the camera profile file)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_CAM_OPT_FPS",
+            "group": "Camera",
+            "label": "Supported Frame Rates",
+            "type": "string",
+            "default": "",
+            "description": "Output frame rates this camera supports (CSV)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_CAM_OPT_BR",
+            "group": "Camera",
+            "label": "Supported Bitrates",
+            "type": "string",
+            "default": "",
+            "description": "Encoder bitrates in kbps offered for this camera (CSV)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_CAM_OPT_CODEC",
+            "group": "Camera",
+            "label": "Supported Codecs",
+            "type": "string",
+            "default": "",
+            "description": "Codecs offered for this camera (CSV)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_CAM_RTSP_URL",
+            "group": "Camera",
+            "label": "RTSP URL Advertised",
+            "type": "string",
+            "default": "rtsp://127.0.0.1:8554/camera",
+            "description": "Camera RTSP URL advertised to QGC",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
         },
         {
             "name": "CC_VIS_CONF",
             "group": "Vision",
             "label": "Confidence Threshold",
             "type": "real32",
-            "default": 0.5,
+            "default": 0.35,
             "min": 0.05,
-            "max": 1.0,
-            "description": "Minimum probability required to accept a detection (0.05 - 1.00)",
-            "reboot": false
+            "max": 0.95,
+            "description": "Object detector confidence threshold",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
+        },
+        {
+            "name": "CC_VIS_FPS",
+            "group": "Vision",
+            "label": "Inference FPS",
+            "type": "uint32",
+            "default": 5,
+            "min": 1,
+            "max": 30,
+            "description": "Requested detector inference frequency",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
+        },
+        {
+            "name": "CC_VIS_MODEL",
+            "group": "Vision",
+            "label": "Vision Model",
+            "type": "string",
+            "default": "yolo26n.pt",
+            "description": "Packaged vision model",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
         },
         {
             "name": "CC_VIS_SRC",
             "group": "Vision",
             "label": "Vision Input Source",
             "type": "string",
-            "default": "camera",
-            "options": [
-                "camera",
-                "rtsp",
-                "file",
-                "test"
-            ],
-            "description": "Input frame source for the AI computer vision pipeline",
-            "reboot": false
+            "default": "/camera/frame_ready",
+            "description": "Vision frame-pool source",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
         },
         {
-            "name": "CC_AP_SSID",
-            "group": "Network",
-            "label": "Wi-Fi AP SSID",
+            "name": "CC_VIS_OUT_URL",
+            "group": "Vision",
+            "label": "Vision Output Stream URL",
             "type": "string",
-            "default": "THACO-DRONE-AP",
-            "description": "SSID broadcast name of the drone Wi-Fi hotspot",
-            "reboot": true
+            "default": "rtsp://127.0.0.1:8554/yolo",
+            "description": "Vision output stream URL",
+            "reboot": true,
+            "readOnly": false,
+            "applyMode": "live"
         },
         {
-            "name": "CC_AP_PASS",
-            "group": "Network",
-            "label": "Wi-Fi AP Password",
+            "name": "CC_CAM_PUB_EN",
+            "group": "Camera",
+            "label": "Publish Enabled",
+            "type": "uint8",
+            "description": "publish enabled",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": 1
+        },
+        {
+            "name": "CC_CAM_PUB_URL",
+            "group": "Camera",
+            "label": "Network.Target Url",
             "type": "string",
-            "default": "thaco123456",
-            "description": "WPA2 security passphrase for drone Wi-Fi network (minimum 8 characters)",
-            "reboot": true
+            "description": "network.target url",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": "rtsp://127.0.0.1:8554/camera"
         },
         {
-            "name": "CC_AP_CH",
-            "group": "Network",
-            "label": "Wi-Fi Channel",
+            "name": "CC_CAM_RES",
+            "group": "Camera",
+            "label": "Output Resolution",
+            "type": "string",
+            "description": "output resolution",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": "1280x720"
+        },
+        {
+            "name": "CC_VIS_EN",
+            "group": "Vision",
+            "label": "Enabled",
+            "type": "uint8",
+            "description": "enabled",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": 1
+        },
+        {
+            "name": "CC_VIS_PUB_EN",
+            "group": "Vision",
+            "label": "Publish Enabled",
+            "type": "uint8",
+            "description": "publish enabled",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": 1
+        },
+        {
+            "name": "CC_VIS_RES",
+            "group": "Vision",
+            "label": "Output Resolution",
+            "type": "string",
+            "description": "output resolution",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": "640x480"
+        },
+        {
+            "name": "CC_VIS_BR",
+            "group": "Vision",
+            "label": "Bitrate Kbps",
             "type": "uint32",
-            "default": 6,
-            "min": 1,
-            "max": 14,
-            "options": [
-                "1",
-                "2",
-                "3",
-                "4",
-                "5",
-                "6",
-                "7",
-                "8",
-                "9",
-                "10",
-                "11"
-            ],
-            "description": "Wi-Fi 2.4GHz operating channel",
-            "reboot": true
+            "description": "bitrate kbps",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": 1000,
+            "min": 300,
+            "max": 20000
         },
         {
-            "name": "CC_ETH0_IP",
-            "group": "Network",
-            "label": "Ethernet IP Address",
+            "name": "CC_VIS_CODEC",
+            "group": "Vision",
+            "label": "Codec",
             "type": "string",
-            "default": "192.168.144.20/24",
-            "description": "Static IP with CIDR subnet for Ethernet eth0 port",
-            "reboot": true
+            "description": "codec",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live",
+            "default": "h264",
+            "options": [
+                "h264",
+                "h265"
+            ]
+        },
+        {
+            "name": "CC_VIS_OPT_RES",
+            "group": "Vision",
+            "label": "Supported Resolutions",
+            "type": "string",
+            "default": "",
+            "description": "Vision output resolutions offered (CSV, from vision.yaml)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_VIS_OPT_FPS",
+            "group": "Vision",
+            "label": "Supported Frame Rates",
+            "type": "string",
+            "default": "",
+            "description": "Vision inference frame rates offered (CSV)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_VIS_OPT_BR",
+            "group": "Vision",
+            "label": "Supported Bitrates",
+            "type": "string",
+            "default": "",
+            "description": "Vision encoder bitrates in kbps offered (CSV)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_VIS_OPT_CODEC",
+            "group": "Vision",
+            "label": "Supported Codecs",
+            "type": "string",
+            "default": "",
+            "description": "Vision codecs offered (CSV)",
+            "reboot": true,
+            "readOnly": true,
+            "applyMode": "boot_only"
+        },
+        {
+            "name": "CC_AP_IP",
+            "group": "Network",
+            "label": "Ap.Ip Cidr",
+            "type": "string",
+            "description": "ap.ip cidr",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
+        },
+        {
+            "name": "CC_AP_DHCP",
+            "group": "Network",
+            "label": "Ap.Dhcp Enabled",
+            "type": "uint8",
+            "description": "ap.dhcp enabled",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "staged"
         }
     ]
 }

@@ -140,20 +140,20 @@ ColumnLayout {
             spacing: ScreenTools.defaultFontPixelWidth
 
             QGCButton {
-                text: qsTr("Restart Agent")
-                enabled: CompanionController.vehicleConnected
+                text: qsTr("Restart Agent (All)")
+                enabled: false // Subsystem 0 (All) is unsupported in Milestone A; invoke per subsystem tab
                 onClicked: CompanionController.applyConfig(0, true)
             }
 
             QGCButton {
-                text: qsTr("Save Defaults")
-                enabled: CompanionController.vehicleConnected
+                text: qsTr("Save Defaults (All)")
+                enabled: false // Subsystem 0 (All) is unsupported in Milestone A; invoke per subsystem tab
                 onClicked: CompanionController.saveDefaultConfig(0)
             }
 
             QGCButton {
-                text: qsTr("Restore Defaults")
-                enabled: CompanionController.vehicleConnected
+                text: qsTr("Restore Defaults (All)")
+                enabled: false // Subsystem 0 (All) is unsupported in Milestone A; invoke per subsystem tab
                 onClicked: CompanionController.restoreDefaultConfig(0)
             }
 

@@ -13,6 +13,17 @@ QGCCorePlugin* CustomPlugin::instance()
     return _customPluginInstance();
 }
 
+const QVariantList& CustomPlugin::toolBarIndicators()
+{
+    static const QVariantList indicators = [this]() {
+        auto result = QGCCorePlugin::toolBarIndicators();
+        for (const auto &name : {"CameraStatusIndicator", "VisionStatusIndicator", "CompanionStatusIndicator"})
+            result.append(QUrl(QString("qrc:/qml/Custom/AgriDrone/%1.qml").arg(name)));
+        return result;
+    }();
+    return indicators;
+}
+
 QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
 {
     QQmlApplicationEngine* const qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
