@@ -61,3 +61,7 @@ QGC's interface is translated by the community — help translate it into your l
 ## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=mavlink/qgroundcontrol&type=Date)](https://star-history.com/#mavlink/qgroundcontrol&Date)
+
+---
+a. build: cmake --build build --config Debug --parallel
+b. run: LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe ./build/Debug/QGroundControl

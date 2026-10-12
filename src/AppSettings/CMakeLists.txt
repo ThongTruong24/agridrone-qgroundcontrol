@@ -23,6 +23,7 @@ file(GLOB _settings_metadata CONFIGURE_DEPENDS "${SETTINGS_METADATA_DIR}/*.Setti
 set(_generated_qml_names
     ADSBServerSettings.qml
     CommLinksSettings.qml
+    CompanionSettings.qml
     FlyViewSettings.qml
     GeneralSettings.qml
     LoggingSettings.qml
@@ -38,6 +39,7 @@ set(_generated_qml_names
 )
 
 qgc_add_qml_codegen(GenerateSettingsQml
+    GENERATE_AT_CONFIGURE
     GENERATOR_MODULE tools.generators.settings_qml.generate_pages
     OUTPUT_DIR       "${SETTINGS_QML_GEN_DIR}"
     QML_NAMES        ${_generated_qml_names}

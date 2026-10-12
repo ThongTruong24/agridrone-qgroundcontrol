@@ -14,28 +14,140 @@ set(QGC_RESOURCES ${QGC_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 
 qt_add_library(AgriDroneModule STATIC)
 
-qgc_set_qt_resource_alias(
+set(AGRIDRONE_QML_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionButton.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionDropPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CameraStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/VisionStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamStatusPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionToggleSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionSettings.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionLogPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionActionBar.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionConfigPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionConfigRow.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOverviewTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionTelemetryTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionNetworkingTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionCameraTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionVisionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionMissionTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionParametersTab.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionParamActions.qml
 )
+
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+qgc_set_qt_resource_alias(${AGRIDRONE_QML_FILES})
 
 qt_add_qml_module(AgriDroneModule
     URI Custom.AgriDrone
     VERSION 1.0
     RESOURCE_PREFIX /qml
     QML_FILES
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
+    ${AGRIDRONE_QML_FILES}
     NO_PLUGIN
 )
+
+# Keep the upstream SettingsPages.json untouched. Generate a custom page model and
+# expose it at the resource path recognized by CustomOverrideInterceptor.
+set(AGRIDRONE_SETTINGS_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_settings_pages.py")
+set(AGRIDRONE_SETTINGS_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/AppSettings/SettingsPages.custom.json")
+set(AGRIDRONE_SETTINGS_MODEL "${CMAKE_CURRENT_BINARY_DIR}/generated/SettingsPagesModel.qml")
+
+file(GLOB AGRIDRONE_SETTINGS_GENERATOR_DEPENDENCIES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/tools/generators/settings_qml/*.py"
+    "${CMAKE_SOURCE_DIR}/tools/generators/settings_qml/templates/*.j2"
+    "${CMAKE_SOURCE_DIR}/tools/generators/common/*.py"
+    "${CMAKE_SOURCE_DIR}/tools/generators/*.py"
+)
+file(GLOB AGRIDRONE_SETTINGS_PAGE_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/AppSettings/pages/*.json"
+)
+
+add_custom_command(
+    OUTPUT "${AGRIDRONE_SETTINGS_MODEL}"
+    COMMAND Python3::Interpreter -m custom.tools.generate_settings_pages
+    --base-pages-dir "${CMAKE_SOURCE_DIR}/src/AppSettings/pages"
+    --custom-pages "${AGRIDRONE_SETTINGS_MANIFEST}"
+    --output "${AGRIDRONE_SETTINGS_MODEL}"
+    DEPENDS
+    "${AGRIDRONE_SETTINGS_GENERATOR}"
+    "${AGRIDRONE_SETTINGS_MANIFEST}"
+    ${AGRIDRONE_SETTINGS_GENERATOR_DEPENDENCIES}
+    ${AGRIDRONE_SETTINGS_PAGE_INPUTS}
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Generating AgriDrone settings page override"
+    VERBATIM
+)
+add_custom_target(GenerateAgriDroneSettingsPages DEPENDS "${AGRIDRONE_SETTINGS_MODEL}")
+add_dependencies(AgriDroneModule GenerateAgriDroneSettingsPages)
+
+set_source_files_properties("${AGRIDRONE_SETTINGS_MODEL}"
+    PROPERTIES
+    GENERATED TRUE
+    QT_RESOURCE_ALIAS "QGroundControl/AppSettings/SettingsPagesModel.qml"
+)
+qt_add_resources(AgriDroneModule "agri_settings_override"
+    PREFIX "/Custom/qml"
+    FILES "${AGRIDRONE_SETTINGS_MODEL}"
+)
+
+set(AGRIDRONE_TEST_SOURCES)
+if(QGC_BUILD_TESTING AND NOT ANDROID)
+    list(APPEND AGRIDRONE_TEST_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionControllerTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionControllerTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionMavlinkDispatcherTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionMavlinkDispatcherTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionParamServiceTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionParamServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionProtocolTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionProtocolTest.h
+    )
+    include(QGCTest)
+    add_qgc_test(CompanionControllerTest LABELS Unit Vehicle)
+    add_qgc_test(CompanionVehicleLifecycleTest LABELS Integration Vehicle)
+    add_qgc_test(CompanionMavlinkDispatcherTest LABELS Unit)
+    add_qgc_test(CompanionLinksServiceTest LABELS Unit)
+    add_qgc_test(CompanionLogServiceTest LABELS Unit)
+    add_qgc_test(CompanionParamServiceTest LABELS Unit)
+    add_qgc_test(CompanionProtocolTest LABELS Unit)
+    add_qgc_test(AgriDroneControllerTest LABELS Unit Vehicle)
+endif()
 
 set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AgriDroneController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ITelemetryHandler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.cc
@@ -45,6 +157,7 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin/CustomFirmwarePluginFactory.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin/CustomFirmwarePluginFactory.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MAVLink/THACOMAVLink.h
+    ${AGRIDRONE_TEST_SOURCES}
     CACHE INTERNAL "" FORCE
 )
 
@@ -56,6 +169,7 @@ set(CUSTOM_LIBRARIES
 set(CUSTOM_INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MAVLink
     CACHE INTERNAL "" FORCE

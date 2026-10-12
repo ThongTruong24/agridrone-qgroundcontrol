@@ -12,6 +12,7 @@
 #include <atomic>
 
 class QUdpSocket;
+class QTimer;
 class QThread;
 
 /*===========================================================================*/
@@ -141,6 +142,9 @@ private:
     bool _isConnected = false;
     bool _errorEmitted = false;
     QSet<QHostAddress> _localAddresses;
+
+    void _sendHolePunch();
+    QTimer *_holePunchTimer = nullptr;
 
     static const QHostAddress _multicastGroup;
 };

@@ -181,38 +181,57 @@ ParameterEditorController::~ParameterEditorController()
     // qCDebug(ParameterEditorControllerLog) << Q_FUNC_INFO << this;
 }
 
+namespace {
+ParameterEditorController::ExternalFactsProvider _externalFactsProvider;
+QUrl _externalActionsUrl;
+}
+
+void ParameterEditorController::setExternalFactsProvider(ExternalFactsProvider provider, const QUrl &actionsQml)
+{
+    _externalFactsProvider = std::move(provider);
+    _externalActionsUrl = actionsQml;
+}
+
+QUrl ParameterEditorController::externalActionsUrl() const
+{
+    return _externalActionsUrl;
+}
+
 void ParameterEditorController::_buildListsForComponent(int compId)
 {
     for (const QString& factName: _parameterMgr->parameterNames(compId)) {
-        Fact* fact = _parameterMgr->getParameter(compId, factName);
-
-        if (_hideReadOnly && fact->readOnly()) {
-            continue;
-        }
-
-        ParameterEditorCategory* category = nullptr;
-        if (_mapCategoryName2Category.contains(fact->category())) {
-            category = _mapCategoryName2Category[fact->category()];
-        } else {
-            category        = new ParameterEditorCategory(this);
-            category->name  = fact->category();
-            _mapCategoryName2Category[fact->category()] = category;
-            _categories.append(category);
-        }
-
-        ParameterEditorGroup* group = nullptr;
-        if (category->mapGroupName2Group.contains(fact->group())) {
-            group = category->mapGroupName2Group[fact->group()];
-        } else {
-            group               = new ParameterEditorGroup(this);
-            group->componentId  = compId;
-            group->name         = fact->group();
-            category->mapGroupName2Group[fact->group()] = group;
-            category->groups.append(group);
-        }
-
-        group->facts.append(fact);
+        _addFactToLists(_parameterMgr->getParameter(compId, factName), compId);
     }
+}
+
+void ParameterEditorController::_addFactToLists(Fact *fact, int compId)
+{
+    if (_hideReadOnly && fact->readOnly()) {
+        return;
+    }
+
+    ParameterEditorCategory* category = nullptr;
+    if (_mapCategoryName2Category.contains(fact->category())) {
+        category = _mapCategoryName2Category[fact->category()];
+    } else {
+        category        = new ParameterEditorCategory(this);
+        category->name  = fact->category();
+        _mapCategoryName2Category[fact->category()] = category;
+        _categories.append(category);
+    }
+
+    ParameterEditorGroup* group = nullptr;
+    if (category->mapGroupName2Group.contains(fact->group())) {
+        group = category->mapGroupName2Group[fact->group()];
+    } else {
+        group               = new ParameterEditorGroup(this);
+        group->componentId  = compId;
+        group->name         = fact->group();
+        category->mapGroupName2Group[fact->group()] = group;
+        category->groups.append(group);
+    }
+
+    group->facts.append(fact);
 }
 
 void ParameterEditorController::_buildLists(void)
@@ -253,6 +272,12 @@ void ParameterEditorController::_buildLists(void)
     for (int compId: _parameterMgr->componentIds()) {
         if (compId != MAV_COMP_ID_AUTOPILOT1) {
             _buildListsForComponent(compId);
+        }
+    }
+
+    if (_externalFactsProvider) {
+        for (Fact *fact: _externalFactsProvider()) {
+            _addFactToLists(fact, fact->componentId());
         }
     }
 

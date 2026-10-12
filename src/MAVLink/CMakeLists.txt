@@ -30,6 +30,12 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 
 message(STATUS "QGC: Building MAVLink")
 
+if(QGC_THACO_MAVLINK)
+    include("${THACO_ROOT}/cmake/THACOMAVLink.cmake")
+    set(mavlink_SOURCE_DIR "${THACO_MAVLINK_SOURCE}")
+    set(mavlink_BINARY_DIR "${CMAKE_BINARY_DIR}/thaco-mavlink")
+    thaco_add_mavlink(mavlink "${QGC_MAVLINK_DIALECT}" C "${mavlink_BINARY_DIR}/include/mavlink")
+else()
 CPMAddPackage(
     NAME mavlink
     GIT_REPOSITORY ${QGC_MAVLINK_GIT_REPO}
@@ -45,6 +51,7 @@ CPMAddPackage(
 )
 
 qgc_require_cpm_added(mavlink)
+endif()
 
 add_dependencies(${CMAKE_PROJECT_NAME} mavlink)
 target_include_directories(${CMAKE_PROJECT_NAME}

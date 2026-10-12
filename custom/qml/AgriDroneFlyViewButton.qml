@@ -2,6 +2,7 @@ import QtQuick
 
 import QGroundControl
 import QGC as QGCNative
+import Custom.AgriDrone
 
 ToolStripAction {
     id:         root

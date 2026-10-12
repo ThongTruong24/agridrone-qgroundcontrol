@@ -2,6 +2,8 @@
 
 Instructions for AI coding agents (Codex, Claude Code, etc.) working on QGroundControl.
 
+> **Context7 Rule**: Always use Context7 when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
+
 ## Quick References
 
 - [CODING_STYLE.md](CODING_STYLE.md) — Naming, formatting, C++20 features, QML style, logging
@@ -25,6 +27,7 @@ enforced by pre-commit hooks, so ignoring them wastes a build cycle. Full list w
 - **No `Q_ASSERT` in production code** — use defensive checks with early returns (`check-no-qassert`).
 - **No `QTest::ignoreMessage`** in tests — use `expectLogMessage`/`ignoreLogMessage` (`check-no-qtest-ignore-message`).
 - **No fixed-delay `QTest::qWait(<n>)`** — use `QTRY_*_WITH_TIMEOUT` or `QSignalSpy::wait` (`check-no-fixed-qwait`).
+- **MAVLink Single Source of Truth** — This QGC checkout consumes `https://github.com/ThongTruong24/agridrone-mavlink`; `custom/cmake/CustomOverrides.cmake` resolves the latest `main` SHA at each configure and CPM generates headers in the build directory. Never edit MAVLink definitions or generated headers in QGC to work around protocol differences. No parent-repository CMake helper is required; see `custom/README.md`.
 
 ## Critical Files (Read First!)
 

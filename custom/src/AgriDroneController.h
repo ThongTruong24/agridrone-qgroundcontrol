@@ -16,6 +16,8 @@ class AgriDroneController : public QObject
     QML_ELEMENT
     QML_SINGLETON
 
+    friend class AgriDroneControllerTest;
+
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
     Q_PROPERTY(bool actuatorAvailable READ actuatorAvailable NOTIFY actuatorAvailableChanged)
     Q_PROPERTY(bool actuatorOn READ actuatorOn NOTIFY actuatorOnChanged)
