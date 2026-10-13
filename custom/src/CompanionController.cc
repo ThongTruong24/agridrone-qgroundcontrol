@@ -1,6 +1,5 @@
 #include <QTimer>
 #include "CompanionController.h"
-#include "ParameterEditorController.h"
 
 #include <QtCore/QPointer>
 #include "MultiVehicleManager.h"
@@ -8,6 +7,7 @@
 #include "VehicleLinkManager.h"
 #include "LinkManager.h"
 #include "Companion/CompanionProtocol.h"
+#include "AppMessages.h"
 #include <QtCore/QUrl>
 #include <QtCore/QRegularExpression>
 
@@ -16,6 +16,57 @@
 
 static constexpr uint8_t kCompanionCompId = 191; // MAV_COMP_ID_ONBOARD_COMPUTER
 
+namespace {
+// Time budgets (ms). Unit tests use short ones so they never wait for the real values.
+int firstAckMs() { return QGC::runningUnitTests() ? 500 : 2000; }
+int finalAckMs() { return QGC::runningUnitTests() ? 1500 : 8000; }
+int totalMs(const QString& group, int sets)
+{
+    const bool test = QGC::runningUnitTests();
+    if (group == "links") return test ? 4000 : 15000;
+    if (group == "hotspot") return test ? 6000 : 25000; // reload + AP wait, and the same again for a rollback
+    return (test ? 2500 : 8000) * qMax(1, sets);
+}
+
+QString groupPrefix(const QString& group)
+{
+    if (group == "links") return QStringLiteral("Links: ");
+    if (group == "hotspot") return QStringLiteral("Hotspot: ");
+    if (group == "camera") return QStringLiteral("Camera: ");
+    return QStringLiteral("Vision: ");
+}
+
+// What the CC is doing at each reported progress value (same numbers as config_manager's report_stage).
+QString stageText(int subsystem, int progress)
+{
+    if (subsystem == 1) {
+        switch (progress) {
+        case 20: return QObject::tr("Kiểm tra cấu hình link");
+        case 50: return QObject::tr("Router mở lại cổng nối tiếp");
+        case 80: return QObject::tr("Đang lưu");
+        }
+    } else if (subsystem == 3) {
+        switch (progress) {
+        case 15: return QObject::tr("Kiểm tra cấu hình hotspot");
+        case 35: return QObject::tr("Khởi động lại dịch vụ mạng");
+        case 60: return QObject::tr("Chờ điểm phát WiFi lên");
+        case 85: return QObject::tr("Đang lưu");
+        }
+    }
+    return QStringLiteral("%1%").arg(progress);
+}
+
+void applyProgressHandler(void* data, int, const mavlink_command_ack_t& ack)
+{
+    static_cast<CompanionController*>(data)->onApplyProgress(ack.progress);
+}
+
+void applyResultHandler(void* data, int, const mavlink_command_ack_t& ack, Vehicle::MavCmdResultFailureCode_t failure)
+{
+    static_cast<CompanionController*>(data)->onApplyResult(ack.result, failure);
+}
+}
+
 CompanionController::CompanionController(QObject* parent)
     : QObject(parent)
 {
@@ -23,12 +74,14 @@ CompanionController::CompanionController(QObject* parent)
     _toolbarOperationTimer = new QTimer(this);
     _toolbarOperationTimer->setSingleShot(true);
     connect(_toolbarOperationTimer, &QTimer::timeout, this, [this]() { toolbarTimedOut(); });
+    _setAckTimer = new QTimer(this);
+    _setAckTimer->setSingleShot(true);
+    connect(_setAckTimer, &QTimer::timeout, this, [this]() { setAckTimedOut(); });
     auto freshnessTimer = new QTimer(this);
     freshnessTimer->setInterval(500);
     connect(freshnessTimer, &QTimer::timeout, this, [this]() { checkToolbarEffect(); emit toolbarStateChanged(); });
     freshnessTimer->start();
     // SOLID: Decoupled services
-    _logService = new CompanionLogService(this);
     _linksService = new CompanionLinksService(this);
     _paramService = new CompanionParamService(this);
     _dispatcher = new CompanionMavlinkDispatcher(this);
@@ -44,34 +97,23 @@ CompanionController::CompanionController(QObject* parent)
         emit vehicleConnectedChanged();
     });
     connect(_linksService, &CompanionLinksService::availablePortsChanged, this, &CompanionController::availablePortsChanged);
-    connect(_paramService, &CompanionParamService::paramListChanged, this, &CompanionController::ccParametersChanged);
     connect(_paramService, &CompanionParamService::paramListChanged, this, &CompanionController::toolbarStateChanged);
     connect(_paramService, &CompanionParamService::isLoadingChanged, this, &CompanionController::ccParametersLoadingChanged);
-    connect(_paramService, &CompanionParamService::modifiedCountChanged, this, &CompanionController::ccModifiedParamCountChanged);
-    connect(_paramService, &CompanionParamService::groupsChanged, this, &CompanionController::ccParameterGroupsChanged);
+    connect(_paramService, &CompanionParamService::parameterAckInProgress, this, [this](const QString& name) {
+        if (!_toolbarOperation || _toolbarOperation->awaiting != name) return;
+        _toolbarOperation->sawInProgress = true;
+        addOperationStep("rx", QStringLiteral("ACK IN_PROGRESS"), "done");
+        _setAckTimer->start(finalAckMs());
+    });
     connect(_paramService, &CompanionParamService::parameterSaved, this, [this](const QString& name, bool success, const QString& msg) {
         toolbarParameterSaved(name, success);
-        _editorApplyParameterSaved(name, success, msg);
         _showToast(msg, !success);
     });
-    connect(_paramService, &CompanionParamService::logMessage, _logService, &CompanionLogService::logMavlink);
-    connect(_linksService, &CompanionLinksService::logMessage, _logService, &CompanionLogService::logMavlink);
-    connect(_logService, &CompanionLogService::logEntriesChanged, this, &CompanionController::logEntriesChanged);
-    connect(_logService, &CompanionLogService::logMessageAdded, this, &CompanionController::mavlinkLogMessage);
-
-    // The Parameters editor lists the CC parameters under "Developer" and shows our Apply bar below the table.
-    ParameterEditorController::setExternalFactsProvider([this]() {
-        // Opening the editor must show what the CC has, not catalog defaults.
-        if (_activeVehicle && !_paramService->syncedCount() && !_paramService->isLoading()) _paramService->requestParameters(_activeVehicle.data());
-        return _paramService->allFacts();
-    },
-                                                        QUrl(QStringLiteral("qrc:/qml/Custom/AgriDrone/CompanionParamActions.qml")));
-
-    // Keep GCS values in step with the CC (an owner restart or a CLI change moves them) unless the operator is editing.
+    // Keep GCS values in step with the CC (an owner restart or an SSH change moves them).
     _ccSyncTimer = new QTimer(this);
     _ccSyncTimer->setInterval(30000);
     connect(_ccSyncTimer, &QTimer::timeout, this, [this]() {
-        if (_activeVehicle && !_paramService->isLoading() && !_paramService->modifiedCount() && _editorApplyState != QLatin1String("running")) {
+        if (_activeVehicle && !_paramService->isLoading() && !_toolbarOperation) {
             _paramService->requestParameters(_activeVehicle.data());
         }
     });
@@ -124,7 +166,6 @@ void CompanionController::_clearTelemetryState()
     _hasVisionTelemetry = false;
     _hasNetworkTelemetry = false;
     _hasSystemTelemetry = false;
-    _hasMissionTelemetry = false;
 
     _camStatus = 0;
     _camName.clear();
@@ -199,7 +240,6 @@ void CompanionController::_clearTelemetryState()
     emit visionChanged();
     emit networkChanged();
     emit systemChanged();
-    emit missionChanged();
     emit vehicleConnectedChanged();
 }
 
@@ -228,25 +268,6 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
         connect(_activeVehicle, &Vehicle::mavlinkMessageReceived, this,
                 &CompanionController::_onMavlinkMessageReceived, Qt::UniqueConnection);
         // connected
-    }
-}
-
-void CompanionController::_logMavlink(const QString& category, const QString& direction, const QString& message, int severity)
-{
-    if (_logService) {
-        _logService->logMavlink(category, direction, message, severity);
-    }
-}
-
-QVariantList CompanionController::getLogHistory(const QString& category) const
-{
-    return _logService ? _logService->getLogHistory(category) : QVariantList();
-}
-
-void CompanionController::clearLogHistory(const QString& category)
-{
-    if (_logService) {
-        _logService->clearLogHistory(category);
     }
 }
 
@@ -280,102 +301,17 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         return;
     }
 
-    if (message.msgid == 32000) { // MAVLINK_MSG_ID_THACO_EXTERNAL_XYZ_TRIGGER
-        mavlink_thaco_external_xyz_trigger_t trigger{};
-        mavlink_msg_thaco_external_xyz_trigger_decode(&message, &trigger);
-        _lastTriggerId = trigger.trigger_id;
-        _lastTriggerTimeBootMs = trigger.time_boot_ms;
-        _hasMissionTelemetry = true;
-        emit missionChanged();
-        _logMavlink(QStringLiteral("MISSION"), QStringLiteral("RX"),
-                    QStringLiteral("MISSION: XYZ trigger %1 at %2 ms").arg(trigger.trigger_id).arg(trigger.time_boot_ms), 6);
-        return;
-    }
-
     if (message.msgid == 253) { // MAVLINK_MSG_ID_STATUSTEXT
-        if (message.compid != kCompanionCompId) return;
+        // Only the group of the running operation: "Links: ", "Hotspot: ", "Camera: ", "Vision: ".
+        if (message.compid != kCompanionCompId || !_toolbarOperation) return;
         mavlink_statustext_t st;
         mavlink_msg_statustext_decode(&message, &st);
-        QString text = QString::fromUtf8(st.text, qstrnlen(st.text, sizeof(st.text))).trimmed();
-        if (!text.isEmpty()) {
-            QString category = QStringLiteral("ALL");
-            if (text.startsWith(QStringLiteral("SIYI:"))) {
-                category = QStringLiteral("SIYI");
-            } else if (text.startsWith(QStringLiteral("FC:"))) {
-                category = QStringLiteral("FC");
-            } else if (text.startsWith(QStringLiteral("NET:"))) {
-                category = QStringLiteral("NETWORK");
-            } else if (text.startsWith(QStringLiteral("CAM:"))) {
-                category = QStringLiteral("CAMERA");
-            } else if (text.startsWith(QStringLiteral("SYS:"))) {
-                category = QStringLiteral("SYSTEM");
-            } else if (text.startsWith(QStringLiteral("VIS:"))) {
-                category = QStringLiteral("VISION");
-            } else {
-                if (_lastAppliedCategory == QStringLiteral("FC")) category = QStringLiteral("FC");
-                else if (_lastAppliedCategory == QStringLiteral("SIYI")) category = QStringLiteral("SIYI");
-            }
-            _logMavlink(category, QStringLiteral("RX"), text, st.severity);
-        }
-        return;
-    }
-
-    if (message.msgid == 77) { // MAVLINK_MSG_ID_COMMAND_ACK
-        if (message.compid != kCompanionCompId) return;
-        mavlink_command_ack_t ack;
-        mavlink_msg_command_ack_decode(&message, &ack);
-        if (ack.target_system != 0 && ack.target_system != MAVLinkProtocol::instance()->getSystemId()) return;
-        if (ack.target_component != 0 && ack.target_component != MAVLinkProtocol::getComponentId()) return;
-        if (_toolbarOperation && _toolbarOperation->waitingCommand && ack.command == MAV_CMD_THACO_APPLY_CONFIG) {
-            if (ack.result == MAV_RESULT_IN_PROGRESS) return;
-            if (ack.result != MAV_RESULT_ACCEPTED) finishToolbarOperation(QString("Apply rejected (%1)").arg(ack.result));
-            else { _toolbarOperation->waitingEffect = true; checkToolbarEffect(); }
-            return;
-        }
-        if (_editorApplyCommandInFlight && ack.command == MAV_CMD_THACO_APPLY_CONFIG) {
-            _editorApplyCommandAck(ack.result);
-            return;
-        }
-        if (_pendingCommand != 0 && ack.command != _pendingCommand) return;
-
-        if (ack.result == MAV_RESULT_IN_PROGRESS) {
-            _configStatus = QStringLiteral("Applying");
-            emit configStatusChanged();
-            return;
-        }
-
-        const quint16 completedCommand = _pendingCommand;
-        _pendingCommand = 0;
-        if (_configTimer) _configTimer->stop();
-
-        emit commandAckReceived(ack.command, ack.result, QString("ACK command %1 result %2").arg(ack.command).arg(ack.result));
-
-        if (ack.result == MAV_RESULT_ACCEPTED) {
-            if (completedCommand == 44011) {
-                _waitingTelemetry = true;
-                _configStatus = QStringLiteral("WaitingTelemetry");
-                _configMessage = QStringLiteral("ACK accepted; waiting for UART telemetry");
-                emit configStatusChanged();
-                if (!_confirmTimer) {
-                    _confirmTimer = new QTimer(this);
-                    _confirmTimer->setSingleShot(true);
-                    connect(_confirmTimer, &QTimer::timeout, this, &CompanionController::_confirmationTimedOut);
-                }
-                _confirmTimer->start(6000);
-            } else {
-                _configStatus = QStringLiteral("Success");
-                _configMessage = QStringLiteral("Companion saved UART defaults");
-                emit configStatusChanged();
-            }
-            QString logTxt = QString("[RX ACK] Command %1 accepted").arg(completedCommand);
-            _logMavlink(QStringLiteral("UART"), QStringLiteral("RX"), logTxt, 6);
-        } else {
-            _configStatus = QStringLiteral("Failed");
-            _configMessage = QStringLiteral("Companion rejected command (%1)").arg(ack.result);
-            emit configStatusChanged();
-            QString logTxt = QString("[RX ACK] Command %1 denied (%2)").arg(completedCommand).arg(ack.result);
-            _logMavlink(QStringLiteral("UART"), QStringLiteral("RX"), logTxt, 3);
-        }
+        const QString text = QString::fromLatin1(st.text, qstrnlen(st.text, sizeof(st.text))).trimmed();
+        auto& op = *_toolbarOperation;
+        if (!text.startsWith(groupPrefix(op.group))) return;
+        op.lastText = text;
+        if (text.endsWith(QStringLiteral("applied but not saved"))) op.notSaved = true;
+        addOperationStep("info", text, "done");
         return;
     }
 
@@ -414,9 +350,6 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
     }
     // Dispatch to registered handlers first (Links, etc.)
     if (_dispatcher && _dispatcher->dispatchMessage(message)) {
-        if (message.msgid == 42010) {
-            _checkTelemetryConfirmation();
-        }
         return;
     }
 
@@ -554,533 +487,12 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         break;
     }
 
-    case 32000: { // THACO_EXTERNAL_XYZ_TRIGGER
-        mavlink_thaco_external_xyz_trigger_t trig;
-        mavlink_msg_thaco_external_xyz_trigger_decode(&message, &trig);
-
-        _hasMissionTelemetry = true;
-        _lastTriggerId = trig.trigger_id;
-        _lastTriggerTimeBootMs = trig.time_boot_ms;
-
-        emit missionChanged();
-        break;
-    }
-
     default:
         break;
     }
 }
 
-void CompanionController::sendCameraConfig(int width, int height, int fps, int bitrateKbps, int rotation, const QString& codec)
-{
-    _videoWidth = width;
-    _videoHeight = height;
-    _videoFps = fps;
-    _bitrateKbps = bitrateKbps;
-    _rotation = rotation;
-    _codec = codec;
-    _configStatus = "STAGED";
-    emit configStatusChanged();
-    _showToast(QString("Staged Camera draft: %1x%2 @ %3fps (%4kbps)").arg(width).arg(height).arg(fps).arg(bitrateKbps), false);
-}
-
-void CompanionController::sendVisionConfig(float confidenceThresh, const QString& modelName, const QString& inputSource)
-{
-    _confidenceThresh = confidenceThresh;
-    _modelName = modelName;
-    _inputSource = inputSource;
-    _configStatus = "STAGED";
-    emit configStatusChanged();
-    _showToast(QString("Staged Vision draft: Model %1 (Thresh %2)").arg(modelName).arg(confidenceThresh, 0, 'f', 2), false);
-}
-
-void CompanionController::sendNetworkConfig(int apChannel, const QString& apSsid, const QString& apPsk, const QString& eth0Ip)
-{
-    Q_UNUSED(apPsk);
-    _apChannel = apChannel;
-    _apSsid = apSsid;
-    _eth0Ip = eth0Ip;
-    _configStatus = "STAGED";
-    emit configStatusChanged();
-    _showToast(QString("Staged Network draft: SSID %1 (Channel %2)").arg(apSsid).arg(apChannel), false);
-}
-
-void CompanionController::sendLinksConfig(int fcBaud, int siyiBaud, const QString& fcPort, const QString& siyiPort)
-{
-    if (!_activeVehicle || !_linksService) return;
-    _linksService->sendLinksConfig(_activeVehicle, fcBaud, siyiBaud, fcPort, siyiPort);
-    _configStatus = "STAGED";
-    emit configStatusChanged();
-}
-
-void CompanionController::applyFcLink(const QString& fcPort, int fcBaud)
-{
-    if (!_linksService) return;
-    QString port = fcPort.trimmed();
-    if (port.isEmpty()) {
-        port = _linksService->fcPort().trimmed();
-    }
-    int baud = fcBaud > 0 ? fcBaud : _linksService->fcBaud();
-
-    if (port.isEmpty()) {
-        _showToast(QStringLiteral("Vui lòng chọn cổng cho Cube FC!"), true);
-        return;
-    }
-    if (baud <= 0) {
-        _showToast(QStringLiteral("Vui lòng chọn baudrate cho Cube FC!"), true);
-        return;
-    }
-
-    QString siyiPort = _linksService->siyiPort().trimmed();
-    int siyiBaud = _linksService->siyiBaud();
-    if (siyiPort.isEmpty()) {
-        siyiPort = QStringLiteral("/dev/ttyAMA0");
-    }
-    if (siyiBaud <= 0) {
-        siyiBaud = 57600;
-    }
-
-    // Guard against port conflict
-    if (!port.isEmpty() && port == siyiPort) {
-        _showToast(QStringLiteral("Lỗi: Cổng %1 đang được sử dụng bởi SIYI! Vui lòng chọn cổng khác.").arg(port), true);
-        _logMavlink(QStringLiteral("FC"), QStringLiteral("ERR"), QStringLiteral("Xung đột cổng: Cube FC và SIYI không thể dùng chung cổng %1").arg(port), 3);
-        return;
-    }
-
-    _logMavlink(QStringLiteral("FC"), QStringLiteral("TX"), QString("[TX CMD] Apply FC Link -> %1@%2 bps (SIYI preserved: %3@%4 bps)").arg(port).arg(baud).arg(siyiPort).arg(siyiBaud), 5);
-    _pendingFcPort    = port;
-    _pendingFcBaud    = baud;
-    _pendingSiyiPort  = siyiPort;
-    _pendingSiyiBaud  = siyiBaud;
-    _pendingCommand   = 44011;
-    _waitingTelemetry = false;
-    _configStatus     = QStringLiteral("Applying");
-    emit configStatusChanged();
-    if (!_configTimer) {
-        _configTimer = new QTimer(this);
-        _configTimer->setSingleShot(true);
-        connect(_configTimer, &QTimer::timeout, this, &CompanionController::_configTimedOut);
-    }
-    _configTimer->start(5000);
-    sendLinksConfig(baud, siyiBaud, port, siyiPort);
-    applyConfig(1, true, QStringLiteral("FC"));
-}
-
-void CompanionController::applySiyiLink(const QString& siyiPort, int siyiBaud)
-{
-    if (!_linksService) return;
-    QString port = siyiPort.trimmed();
-    if (port.isEmpty()) {
-        port = _linksService->siyiPort().trimmed();
-    }
-    int baud = siyiBaud > 0 ? siyiBaud : _linksService->siyiBaud();
-
-    if (port.isEmpty()) {
-        _showToast(QStringLiteral("Vui lòng chọn cổng cho SIYI Link!"), true);
-        return;
-    }
-    if (baud <= 0) {
-        _showToast(QStringLiteral("Vui lòng chọn baudrate cho SIYI Link!"), true);
-        return;
-    }
-
-    QString fcPort = _linksService->fcPort().trimmed();
-    int fcBaud = _linksService->fcBaud();
-    if (fcPort.isEmpty()) {
-        fcPort = QStringLiteral("/dev/ttyAMA4");
-    }
-    if (fcBaud <= 0) {
-        fcBaud = 921600;
-    }
-
-    // Guard against port conflict
-    if (!port.isEmpty() && port == fcPort) {
-        _showToast(QStringLiteral("Lỗi: Cổng %1 đang được sử dụng bởi Cube FC! Vui lòng chọn cổng khác.").arg(port), true);
-        _logMavlink(QStringLiteral("SIYI"), QStringLiteral("ERR"), QStringLiteral("Xung đột cổng: SIYI và Cube FC không thể dùng chung cổng %1").arg(port), 3);
-        return;
-    }
-
-    _logMavlink(QStringLiteral("SIYI"), QStringLiteral("TX"), QString("[TX CMD] Apply SIYI Link -> %1@%2 bps (FC preserved: %3@%4 bps)").arg(port).arg(baud).arg(fcPort).arg(fcBaud), 5);
-    _pendingFcPort    = fcPort;
-    _pendingFcBaud    = fcBaud;
-    _pendingSiyiPort  = port;
-    _pendingSiyiBaud  = baud;
-    _pendingCommand   = 44011;
-    _waitingTelemetry = false;
-    _configStatus     = QStringLiteral("Applying");
-    emit configStatusChanged();
-    if (!_configTimer) {
-        _configTimer = new QTimer(this);
-        _configTimer->setSingleShot(true);
-        connect(_configTimer, &QTimer::timeout, this, &CompanionController::_configTimedOut);
-    }
-    _configTimer->start(5000);
-    sendLinksConfig(fcBaud, baud, fcPort, port);
-    applyConfig(1, true, QStringLiteral("SIYI"));
-}
-
-CompanionController::~CompanionController()
-{
-    ParameterEditorController::setExternalFactsProvider(nullptr);
-}
-
-void CompanionController::_editorLog(const QString& line, const char* state)
-{
-    _editorApplyLog.append(line);
-    if (state) _editorApplyState = QLatin1String(state);
-    emit editorApplyChanged();
-    _logMavlink(QStringLiteral("Developer"), QStringLiteral("TX"), line, _editorApplyState == QLatin1String("failed") ? 3 : 6);
-    // A finished apply stays on screen long enough to read, then clears itself.
-    if (_editorApplyState == QLatin1String("success")) {
-        QTimer::singleShot(20000, this, [this, count = _editorApplyLog.size()]() {
-            if (_editorApplyState == QLatin1String("success") && _editorApplyLog.size() == count) dismissEditorApply();
-        });
-    }
-}
-
-void CompanionController::dismissEditorApply()
-{
-    if (_editorApplyState == QLatin1String("running")) return;
-    _editorApplyLog.clear();
-    _editorApplyState = QStringLiteral("idle");
-    emit editorApplyChanged();
-}
-
-void CompanionController::_editorApplyReset()
-{
-    _editorApplyAwaiting.clear();
-    _editorApplyExpected.clear();
-    _editorApplyQueue.clear();
-    _editorApplyCommandInFlight = false;
-    _editorApplyFailed = false;
-}
-
-void CompanionController::applyModifiedCcParameters()
-{
-    if (_editorApplyState == QLatin1String("running")) return;
-    _editorApplyReset();
-    _editorApplyLog.clear();
-    _editorApplyState = QStringLiteral("running");
-    emit editorApplyChanged();
-
-    if (!_activeVehicle) { _editorLog(QStringLiteral("✗ No vehicle connected"), "failed"); return; }
-    if (_activeVehicle->armed()) { _editorLog(QStringLiteral("✗ Vehicle is armed: the Companion Computer rejects changes"), "failed"); return; }
-    if (!_paramService->modifiedCount()) { _editorLog(QStringLiteral("✗ Nothing staged"), "failed"); return; }
-
-    _editorLog(QStringLiteral("Step 1/3: sending %1 change(s) to the Companion Computer").arg(_paramService->modifiedCount()), "running");
-    QMap<QString, QString> shown;
-    for (const QString& name : _paramService->allFactNames()) {
-        if (_paramService->isModified(name)) { _editorApplyExpected[name] = _paramService->stagedValue(name); shown[name] = _paramService->stagedText(name); }
-    }
-    const QStringList sent = _paramService->saveModifiedParameters(_activeVehicle.data());
-    for (auto it = _editorApplyExpected.begin(); it != _editorApplyExpected.end();) {
-        if (sent.contains(it.key())) ++it; else it = _editorApplyExpected.erase(it); // already equal on the CC: nothing to write
-    }
-    if (sent.isEmpty()) { _editorLog(QStringLiteral("✓ Nothing to write: the Companion Computer already has these values"), "success"); return; }
-
-    for (const QString& name : sent) {
-        _editorApplyAwaiting.insert(name);
-        _editorLog(QStringLiteral("  → %1 = %2").arg(name, shown.value(name)));
-        if (const int subsystem = _paramService->stagedSubsystem(name); subsystem && !_editorApplyQueue.contains(subsystem)) _editorApplyQueue.append(subsystem);
-    }
-    std::sort(_editorApplyQueue.begin(), _editorApplyQueue.end());
-
-    // A lost ACK must not leave the apply hanging with no word.
-    QTimer::singleShot(10000, this, [this, count = _editorApplyLog.size()]() {
-        if (_editorApplyState != QLatin1String("running") || _editorApplyAwaiting.isEmpty() || _editorApplyLog.size() < count) return;
-        _editorLog(QStringLiteral("✗ No ACK from the Companion Computer for: %1. Nothing else was applied.")
-                       .arg(QStringList(_editorApplyAwaiting.cbegin(), _editorApplyAwaiting.cend()).join(QStringLiteral(", "))), "failed");
-        _editorApplyReset();
-    });
-}
-
-void CompanionController::_editorApplyParameterSaved(const QString& name, bool success, const QString& message)
-{
-    if (_editorApplyState != QLatin1String("running") || !_editorApplyAwaiting.remove(name)) return;
-    _editorApplyFailed = _editorApplyFailed || !success;
-    _editorLog(success ? QStringLiteral("  ✓ %1 accepted by the CC").arg(name) : QStringLiteral("  ✗ %1 rejected by the CC: %2").arg(name, message));
-    if (!_editorApplyAwaiting.isEmpty()) return;
-
-    if (_editorApplyFailed) {
-        _editorLog(QStringLiteral("✗ Not applied: the Companion Computer rejected a write. Staged subsystems were left untouched."), "failed");
-        _editorApplyReset();
-        return;
-    }
-    _editorApplyNextCommand();
-}
-
-void CompanionController::_editorApplyNextCommand()
-{
-    if (_editorApplyQueue.isEmpty()) { _editorApplyVerify(); return; }
-    const int subsystem = _editorApplyQueue.first();
-    static const QHash<int, QString> names{{1, QStringLiteral("UART links")}, {3, QStringLiteral("hotspot")}};
-    _editorLog(QStringLiteral("Step 2/3: applying %1 on the Companion Computer").arg(names.value(subsystem, QString::number(subsystem))));
-    _editorApplyCommandInFlight = true;
-    applyConfig(subsystem, true, QStringLiteral("Developer"));
-    QTimer::singleShot(15000, this, [this, subsystem, count = _editorApplyLog.size()]() {
-        if (_editorApplyCommandInFlight && _editorApplyLog.size() == count && !_editorApplyQueue.isEmpty() && _editorApplyQueue.first() == subsystem) {
-            _editorLog(QStringLiteral("✗ No answer to APPLY from the Companion Computer within 15 s"), "failed");
-            _editorApplyReset();
-        }
-    });
-}
-
-void CompanionController::_editorApplyCommandAck(uint8_t result)
-{
-    if (result == MAV_RESULT_IN_PROGRESS) { _editorLog(QStringLiteral("  … the CC is applying")); return; }
-    _editorApplyCommandInFlight = false;
-    _pendingCommand = 0; // applyConfig() armed the legacy single-command tracker; this flow owns the ACK
-    _configStatus = QStringLiteral("IDLE");
-    emit configStatusChanged();
-
-    if (result != MAV_RESULT_ACCEPTED) {
-        _editorLog(QStringLiteral("  ✗ APPLY refused by the CC (result %1)").arg(result));
-        _editorLog(QStringLiteral("✗ The values are staged on the CC but not active. Retry, or Discard and re-read."), "failed");
-        _editorApplyReset();
-        return;
-    }
-    _editorLog(QStringLiteral("  ✓ APPLY accepted by the CC"));
-    if (!_editorApplyQueue.isEmpty()) _editorApplyQueue.removeFirst();
-    _editorApplyNextCommand();
-}
-
-void CompanionController::_editorApplyVerify()
-{
-    _editorLog(QStringLiteral("Step 3/3: reading the values back from the Companion Computer"));
-    _paramService->requestParameters(_activeVehicle.data());
-    const auto expected = _editorApplyExpected;
-    QTimer::singleShot(6000, this, [this, expected]() {
-        bool ok = true;
-        for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
-            const QVariant confirmed = _paramService->confirmedValue(it.key());
-            const bool isSecret = _paramService->stagedText(it.key()) == QStringLiteral("<hidden>");
-            if (isSecret) { _editorLog(QStringLiteral("  ✓ %1 written (secret, not read back)").arg(it.key())); continue; }
-            if (confirmed.isValid() && confirmed.toString() == it.value().toString()) {
-                _editorLog(QStringLiteral("  ✓ %1 reads back as %2").arg(it.key(), confirmed.toString()));
-            } else {
-                ok = false;
-                _editorLog(QStringLiteral("  ✗ %1 reads back as %2, expected %3").arg(it.key(), confirmed.isValid() ? confirmed.toString() : QStringLiteral("(nothing)"), it.value().toString()));
-            }
-        }
-        _editorLog(ok ? QStringLiteral("✓ Applied: the Companion Computer confirms every change") : QStringLiteral("✗ Applied, but the CC does not report the expected value; check the CC before relying on it"),
-                   ok ? "success" : "failed");
-        _editorApplyReset();
-    });
-}
-
-void CompanionController::applyConfig(int subsystemId, bool restartImmediate, const QString& originCategory)
-{
-    Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-
-    if (!sharedLink) {
-        _showToast(QStringLiteral("No active MAVLink link found!"), true);
-        return;
-    }
-
-    if (!originCategory.isEmpty()) {
-        _lastAppliedCategory = originCategory;
-    }
-
-    mavlink_message_t msg;
-    mavlink_command_long_t cmd{};
-    cmd.target_system = vehicle ? vehicle->id() : 1;
-    cmd.target_component = kCompanionCompId;
-    cmd.command = 44011; // MAV_CMD_THACO_APPLY_CONFIG
-    cmd.confirmation = 0;
-    cmd.param1 = static_cast<float>(subsystemId);
-    cmd.param2 = restartImmediate ? 1.0f : 0.0f;
-
-    mavlink_msg_command_long_encode_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        &cmd
-    );
-    if (vehicle) {
-        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
-    } else {
-        sharedLink->sendMessageThreadSafe(msg);
-    }
-
-    _configStatus = "APPLYING";
-    emit configStatusChanged();
-
-    // Auto-reset state after 3.5s timeout so button never gets stuck
-    QTimer::singleShot(3500, this, [this]() {
-        if (_configStatus == "APPLYING") {
-            _configStatus = "IDLE";
-            emit configStatusChanged();
-        }
-    });
-
-    QString logTxt = QString("[TX CMD] APPLY_CONFIG -> Subsystem: %1, Restart: %2")
-        .arg(subsystemId)
-        .arg(restartImmediate ? "Immediate" : "Pending");
-    _logMavlink(_lastAppliedCategory.isEmpty() ? "FC" : _lastAppliedCategory, "TX", logTxt, 5);
-
-    _showToast(QString("Sent Apply Config (%1, %2)").arg(_lastAppliedCategory).arg(restartImmediate ? "Restarting" : "Staged"), false);
-}
-
-void CompanionController::saveDefaultConfig(int subsystemId)
-{
-    Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-    if (!sharedLink) return;
-
-    mavlink_message_t msg;
-    mavlink_command_long_t cmd{};
-    cmd.target_system = vehicle ? vehicle->id() : 1;
-    cmd.target_component = kCompanionCompId;
-    cmd.command = 44010; // MAV_CMD_THACO_SAVE_DEFAULT_CONFIG
-    cmd.confirmation = 0;
-    cmd.param1 = static_cast<float>(subsystemId);
-
-    mavlink_msg_command_long_encode_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        &cmd
-    );
-    if (vehicle) {
-        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
-    } else {
-        sharedLink->sendMessageThreadSafe(msg);
-    }
-
-    QString logTxt = QString("COMMAND_LONG #44010 (SAVE_DEFAULT) -> Subsystem: %1").arg(subsystemId);
-    _logMavlink("FC", "TX", logTxt, 5);
-    _logMavlink("SIYI", "TX", logTxt, 5);
-    _logMavlink("ALL", "TX", logTxt, 5);
-
-    _showToast(QString("Sent Save Default Config (Subsystem %1)").arg(subsystemId), false);
-}
-
-void CompanionController::restoreDefaultConfig(int subsystemId)
-{
-    Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-    if (!sharedLink) return;
-
-    mavlink_message_t msg;
-    mavlink_command_long_t cmd{};
-    cmd.target_system = vehicle ? vehicle->id() : 1;
-    cmd.target_component = kCompanionCompId;
-    cmd.command = 44012; // MAV_CMD_THACO_RESTORE_DEFAULT_CONFIG
-    cmd.confirmation = 0;
-    cmd.param1 = static_cast<float>(subsystemId);
-
-    mavlink_msg_command_long_encode_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        &cmd
-    );
-    if (vehicle) {
-        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
-    } else {
-        sharedLink->sendMessageThreadSafe(msg);
-    }
-
-    QString logTxt = QString("COMMAND_LONG #44012 (RESTORE_DEFAULT) -> Subsystem: %1").arg(subsystemId);
-    _logMavlink("FC", "TX", logTxt, 5);
-    _logMavlink("SIYI", "TX", logTxt, 5);
-    _logMavlink("ALL", "TX", logTxt, 5);
-
-    _showToast(QString("Sent Restore Default Config (Subsystem %1)").arg(subsystemId), false);
-}
-
-void CompanionController::sendCliCommand(const QString& cmdText)
-{
-    QString trimmed = cmdText.trimmed();
-    if (trimmed.isEmpty()) return;
-
-    _logMavlink(QStringLiteral("CLI"), QStringLiteral("TX"), QString("> %1").arg(trimmed), 6);
-
-    QString lower = trimmed.toLower();
-    if (lower == "help" || lower == "?") {
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("Commands: status, ping, ports, restart, save, restore, help"), 6);
-        return;
-    }
-    if (lower == "ping") {
-        Vehicle* vehicle = _activeVehicle ? _activeVehicle.data() : MultiVehicleManager::instance()->activeVehicle();
-        if (!vehicle && !vehicleConnected()) {
-            _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("ERR: No active MAVLink connection"), 3);
-        } else {
-            int vId = vehicle ? vehicle->id() : 1;
-            _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("PONG: Vehicle ID %1 online, Companion Comp ID %2 reachable").arg(vId).arg(kCompanionCompId), 6);
-        }
-        return;
-    }
-    if (lower == "status") {
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("SYSTEM: CPU %1% | RAM %2% | Disk %3% | Temp %4C | Uptime %5s")
-            .arg(_cpuUsage).arg(_ramUsage).arg(_diskUsage).arg(_cpuTemp).arg(_uptimeS), 6);
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("LINKS: FC=%1 (%2bps @ %3) | SIYI=%4 (%5bps @ %6)")
-            .arg(fcStatus() == 2 ? "ONLINE" : "OFFLINE").arg(fcBaud()).arg(fcPort())
-            .arg(siyiStatus() == 2 ? "ONLINE" : "OFFLINE").arg(siyiBaud()).arg(siyiPort()), 6);
-        return;
-    }
-    if (lower == "ports") {
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("Detected Serial Ports: %1").arg(availablePorts().join(", ")), 6);
-        return;
-    }
-    if (lower == "restart" || lower == "restart agent") {
-        applyConfig(0, true);
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("Sent MAVLink agent restart request."), 6);
-        return;
-    }
-    if (lower == "save") {
-        saveDefaultConfig(0);
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("Sent Save Default Config command."), 6);
-        return;
-    }
-    if (lower == "restore") {
-        restoreDefaultConfig(0);
-        _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QStringLiteral("Sent Restore Default Config command."), 6);
-        return;
-    }
-
-    _logMavlink(QStringLiteral("CLI"), QStringLiteral("RX"), QString("Unknown CLI command: '%1'. Type 'help' for available commands.").arg(trimmed), 4);
-}
+CompanionController::~CompanionController() = default;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // New public API + test helpers
@@ -1184,126 +596,23 @@ QVariantMap CompanionController::ccTelemetrySystem() const
     return m;
 }
 
-bool CompanionController::logMatchesFilter(const QString& prefix, const QString& category, const QString& text) const
-{
-    Q_UNUSED(category);
-    return text.startsWith(prefix);
-}
-
-void CompanionController::applyLinksConfig(const QString& fcPort, int fcBaud,
-                                            const QString& siyiPort, int siyiBaud)
-{
-    if (fcPort.toUtf8().size() > 15 || siyiPort.toUtf8().size() > 15) {
-        _configMessage = QStringLiteral("UART port must fit within 15 UTF-8 bytes");
-        _configStatus  = QStringLiteral("Failed");
-        emit configStatusChanged();
-        return;
-    }
-    if (_pendingCommand || _waitingTelemetry) {
-        return;
-    }
-
-    _pendingFcPort   = fcPort;
-    _pendingFcBaud   = fcBaud;
-    _pendingSiyiPort = siyiPort;
-    _pendingSiyiBaud = siyiBaud;
-    _pendingCommand  = 44011;
-    _waitingTelemetry = false;
-    _configMessage.clear();
-
-    if (_linksService) {
-        _linksService->sendLinksConfig(_activeVehicle ? _activeVehicle.data() : nullptr,
-                                       fcBaud, siyiBaud, fcPort, siyiPort);
-    }
-
-    applyConfig(1, true, QStringLiteral("FC"));
-
-    _configStatus = QStringLiteral("Applying");
-    emit configStatusChanged();
-
-    if (!_configTimer) {
-        _configTimer = new QTimer(this);
-        _configTimer->setSingleShot(true);
-        connect(_configTimer, &QTimer::timeout, this, &CompanionController::_configTimedOut);
-    }
-    _configTimer->start(5000);
-}
-
-void CompanionController::saveLinksConfig()
-{
-    if (_pendingCommand || _waitingTelemetry) {
-        return;
-    }
-    _pendingCommand   = 44010;
-    _waitingTelemetry = false;
-    saveDefaultConfig(1);
-
-    _configStatus = QStringLiteral("Applying");
-    emit configStatusChanged();
-
-    if (!_confirmTimer) {
-        _confirmTimer = new QTimer(this);
-        _confirmTimer->setSingleShot(true);
-        connect(_confirmTimer, &QTimer::timeout, this, &CompanionController::_confirmationTimedOut);
-    }
-    _confirmTimer->start(5000);
-}
-
-void CompanionController::_configTimedOut()
-{
-    _pendingCommand = 0;
-    _waitingTelemetry = false;
-    if (_configStatus == QStringLiteral("Applying")) {
-        _configStatus = QStringLiteral("Timeout");
-        emit configStatusChanged();
-    }
-}
-
-void CompanionController::_confirmationTimedOut()
-{
-    _pendingCommand = 0;
-    _waitingTelemetry = false;
-    if (_configStatus == QStringLiteral("WaitingTelemetry") ||
-        _configStatus == QStringLiteral("Applying")) {
-        _configStatus = QStringLiteral("Timeout");
-        emit configStatusChanged();
-    }
-}
-
 void CompanionController::resetForTest()
 {
     _sourceSystemId    = -1;
     _sourceComponentId = -1;
     _linksStale        = false;
-    _pendingCommand    = 0;
-    _waitingTelemetry  = false;
     _clearTelemetryState();
+}
+
+void CompanionController::setReceivedAgeForTest(const QString& key, qint64 ageMs)
+{
+    _toolbarReceived[key] = _toolbarClock.elapsed() - ageMs;
 }
 
 void CompanionController::forceStaleForTest()
 {
     _linksStale = true;
     if (_telemetryWatchdog) _telemetryWatchdog->stop();
-}
-
-void CompanionController::_checkTelemetryConfirmation()
-{
-    if (!_waitingTelemetry || !linksReceived() || _linksStale) {
-        return;
-    }
-    if (_linksService->fcPort() != _pendingFcPort ||
-        _linksService->fcBaud() != _pendingFcBaud ||
-        _linksService->siyiPort() != _pendingSiyiPort ||
-        _linksService->siyiBaud() != _pendingSiyiBaud) {
-        return;
-    }
-    if (_confirmTimer) {
-        _confirmTimer->stop();
-    }
-    _waitingTelemetry = false;
-    _configStatus = QStringLiteral("Success");
-    _configMessage = QStringLiteral("UART configuration confirmed by telemetry");
-    emit configStatusChanged();
 }
 
 QVariantMap CompanionController::streamState(const QString& stream) const
@@ -1314,10 +623,16 @@ QVariantMap CompanionController::streamState(const QString& stream) const
     state["fresh"] = fresh;
     state["pending"] = _toolbarOperation && _toolbarOperation->group == stream;
     state["error"] = _toolbarErrors.value(stream);
+    state["operation"] = operationState(stream);
+    state["reason"] = streamReason(stream);
     const bool camera = stream == "camera";
     auto value = [this](const QString& id) { return _paramService->confirmedValue(id); };
     state["configuredUrl"] = value(camera ? "CC_CAM_PUB_URL" : "CC_VIS_OUT_URL");
     state["publishEnabled"] = value(camera ? "CC_CAM_PUB_EN" : "CC_VIS_PUB_EN");
+    if (!camera) {
+        state["confidence"] = value("CC_VIS_CONF");
+        state["aiBranch"] = value("CC_CAM_AI_EN").toBool();
+    }
     state["configured"] = QVariantMap{{"resolution", value(camera ? "CC_CAM_RES" : "CC_VIS_RES")},
         {"fps", value(camera ? "CC_CAM_FPS" : "CC_VIS_FPS")}, {"bitrate", value(camera ? "CC_CAM_BR" : "CC_VIS_BR")},
         {"codec", value(camera ? "CC_CAM_CODEC" : "CC_VIS_CODEC")}};
@@ -1343,11 +658,30 @@ QVariantMap CompanionController::streamState(const QString& stream) const
     return state;
 }
 
+QVariantMap CompanionController::streamReason(const QString& stream) const
+{
+    const bool camera = stream == "camera";
+    const QString label = camera ? QStringLiteral("Video") : QStringLiteral("Vision");
+    const auto r = [](int code, const QString& text) { return QVariantMap{{"code", code}, {"text", text}}; };
+    if (!_activeVehicle) return r(1, tr("Chưa kết nối vehicle"));
+    if (!companionState().value("connected").toBool()) return r(2, tr("Mất kết nối tới Companion"));
+    if (!_toolbarReceived.contains(stream)) return r(3, tr("Chưa nhận telemetry %1 từ Companion. Node %1 có thể chưa chạy").arg(label));
+    const qint64 age = _toolbarClock.elapsed() - _toolbarReceived.value(stream);
+    if (age > 3500) return r(4, tr("Không nhận telemetry %1, lần cuối %2 s trước").arg(label).arg(age / 1000));
+    const int version = _streamTelemetry.value(stream).value("version").toInt();
+    if (version != 1) return r(5, tr("%1 trên Companion là bản cũ (config_version %2), cần cập nhật").arg(label).arg(version));
+    if (_paramService->isLoading()) return r(6, tr("Đang tải tham số Companion…"));
+    if (!_paramService->confirmedValue(camera ? "CC_CAM_RES" : "CC_VIS_RES").isValid()) return r(7, tr("%1 chưa trả tham số cấu hình").arg(label));
+    if (_activeVehicle->armed()) return r(8, tr("Khoá cấu hình khi đang arm"));
+    if (_toolbarOperation && _toolbarOperation->origin != stream) return r(9, tr("Companion đang xử lý thao tác khác (%1)").arg(_toolbarOperation->group));
+    return r(0, QString());
+}
+
 QVariantMap CompanionController::companionState() const
 {
     const bool heartbeat = _toolbarReceived.contains("heartbeat") && _toolbarClock.elapsed() - _toolbarReceived.value("heartbeat") <= 3500;
     const bool fresh = _toolbarReceived.contains("system") && _toolbarClock.elapsed() - _toolbarReceived.value("system") <= 3500;
-    return {{"connected", heartbeat}, {"pending", bool(_toolbarOperation)}, {"fresh", fresh}, {"name", fresh ? _companionName : QString()},
+    return {{"connected", heartbeat}, {"pending", bool(_toolbarOperation)}, {"fresh", fresh}, {"linkError", _toolbarErrors.value("links")}, {"name", fresh ? _companionName : QString()},
         {"cpuUsage", fresh ? QVariant(_cpuUsage) : QVariant()}, {"cpuTemp", fresh ? QVariant(_cpuTemp) : QVariant()}};
 }
 
@@ -1358,8 +692,8 @@ QVariantMap CompanionController::hotspotState() const
         {"wifiName", fresh ? _wlan0Ssid : QString()}, {"wifiConnected", fresh && _wlan0Status == CC_NET_STATUS_UP},
         {"ssid", fresh ? _apSsid : QString()}, {"open", fresh && _apStatus == CC_NET_STATUS_UP},
         {"ipCidr", fresh ? _apIp + "/" + QString::number(_apPrefixLength) : QString()},
-        {"dhcpEnabled", _apDhcpEnabled}, {"pending", _toolbarOperation && _toolbarOperation->group == "hotspot"},
-        {"error", _toolbarErrors.value("hotspot")}};
+        {"dhcpEnabled", fresh && _apDhcpEnabled}, {"pending", _toolbarOperation && _toolbarOperation->group == "hotspot"},
+        {"error", _toolbarErrors.value("hotspot")}, {"operation", operationState("companion")}};
 }
 
 namespace {
@@ -1373,11 +707,11 @@ bool validPublishUrl(const QString& input)
 }
 }
 
-bool CompanionController::beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem)
+bool CompanionController::beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem,
+                                                const QString& origin, const QStringList& skippedNotes)
 {
-    if (_paramService->isLoading() || _toolbarOperation || _pendingCommand || !_activeVehicle || _activeVehicle->armed() || !_sourceComponentId ||
+    if (_paramService->isLoading() || _toolbarOperation || !_activeVehicle || _activeVehicle->armed() || !_sourceComponentId ||
         _sourceComponentId != kCompanionCompId || _sourceSystemId != _activeVehicle->id()) return false;
-    if (subsystem && _paramService->modifiedCount()) { _toolbarErrors[group] = "Cancel existing staged edits before using toolbar Apply"; emit toolbarStateChanged(); return false; }
     if (subsystem == 1) {
         for (const auto& item : serialLinks()) {
             const auto link = item.toMap();
@@ -1394,7 +728,8 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
     }
     if (subsystem == 3) {
         const auto active = hotspotState();
-        for (const auto &field : {QPair<QString, QString>{"CC_AP_SSID", "ssid"}, {"CC_AP_IP", "ipCidr"}, {"CC_AP_DHCP", "dhcpEnabled"}}) {
+        // With the AP off nothing is broadcast, so the stage cannot be compared; recovering from there is the point.
+        if (active.value("open").toBool()) for (const auto &field : {QPair<QString, QString>{"CC_AP_SSID", "ssid"}, {"CC_AP_IP", "ipCidr"}, {"CC_AP_DHCP", "dhcpEnabled"}}) {
             const auto configured = _paramService->confirmedValue(field.first);
             const bool equal = field.first == "CC_AP_DHCP" ? configured.toBool() == active.value(field.second).toBool()
                 : configured.toString() == active.value(field.second).toString();
@@ -1411,15 +746,19 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
     for (const auto& entry : values) {
         auto confirmed = anticipated.contains(entry.first) ? anticipated.value(entry.first) : _paramService->confirmedValue(entry.first);
         if (!confirmed.isValid()) { _paramService->requestParameters(_activeVehicle); return false; }
-        if (confirmed.toString() != entry.second.toString()) {
+        const bool forced = (group == "camera" || group == "vision") && entry.first.endsWith("_EN");
+        if (forced || confirmed.toString() != entry.second.toString()) {
             op.values.append(entry); op.previous[entry.first] = confirmed; anticipated[entry.first] = entry.second;
         }
     }
     if (op.values.isEmpty()) return true;
+    op.origin = origin.isEmpty() ? ((group == "links" || group == "hotspot") ? QStringLiteral("companion") : group) : origin;
+    op.startedMs = _toolbarClock.elapsed();
+    for (const auto& note : skippedNotes) op.steps.append({"info", note, "skipped", 0});
     _toolbarErrors.remove(group);
     _toolbarOperation = op;
-    _toolbarOperationTimer->start(group == "hotspot" ? 15000 : 5000);
-    emit toolbarStateChanged();
+    _toolbarOperationTimer->start(totalMs(group, op.values.size()));
+    publishOperation(QString());
     advanceToolbarOperation();
     return true;
 }
@@ -1432,26 +771,43 @@ void CompanionController::advanceToolbarOperation()
     if (op.next < op.values.size()) {
         const auto entry = op.values[op.next++];
         op.awaiting = entry.first;
+        op.sawInProgress = false;
+        const bool secret = _paramService->isSecret(entry.first);
+        addOperationStep("tx", QStringLiteral("%1PARAM_EXT_SET %2=%3").arg(op.rollingBack ? QStringLiteral("(rollback) ") : QString(), entry.first,
+                         secret ? QStringLiteral("<hidden>") : entry.second.toString()), "waiting");
+        _setAckTimer->start(firstAckMs());
         _paramService->sendSingleParamSet(_activeVehicle, entry.first, entry.second);
         return;
     }
     op.awaiting.clear();
+    _setAckTimer->stop();
     if (op.rollingBack) { finishToolbarOperation(op.rollbackError + "; previous stage restored"); return; }
     if (op.subsystem) {
         op.waitingCommand = true;
+        op.applySent = true;
         op.effectAfter = _toolbarClock.elapsed();
-        if (!Companion::sendCommand(_activeVehicle, static_cast<uint8_t>(_activeVehicle->id()), MAV_CMD_THACO_APPLY_CONFIG, op.subsystem, 1))
-            finishToolbarOperation("MAVLink transport unavailable");
+        Vehicle::MavCmdAckHandlerInfo_t info{};
+        info.resultHandler = &applyResultHandler;
+        info.resultHandlerData = this;
+        info.progressHandler = &applyProgressHandler;
+        info.progressHandlerData = this;
+        addOperationStep("tx", QStringLiteral("APPLY %1").arg(op.group), "waiting");
+        _activeVehicle->sendMavCommandWithHandler(&info, kCompanionCompId, static_cast<MAV_CMD>(MAV_CMD_THACO_APPLY_CONFIG), op.subsystem, 1);
     } else finishToolbarOperation();
 }
 
 void CompanionController::toolbarParameterSaved(const QString& name, bool success)
 {
     if (!_toolbarOperation || _toolbarOperation->awaiting != name) return;
-    const auto expected = _toolbarOperation->values[_toolbarOperation->next - 1].second;
-    if (!success || _paramService->confirmedValue(name).toString() != expected.toString()) {
+    auto &op = *_toolbarOperation;
+    _setAckTimer->stop();
+    const auto expected = op.values[op.next - 1].second;
+    // A secret is never echoed back, so only the result code counts for it.
+    const bool matches = _paramService->isSecret(name) || _paramService->confirmedValue(name).toString() == expected.toString();
+    if (!success || !matches) {
+        settleWaitingSteps("error");
+        addOperationStep("rx", success ? QStringLiteral("ACK khác giá trị đã gửi") : QStringLiteral("ACK FAILED"), "error");
         // Cancel only this session's successful stage writes, in ACK order.
-        auto &op = *_toolbarOperation;
         if (op.subsystem && !op.waitingCommand && !op.rollingBack && _activeVehicle && !_activeVehicle->armed()) {
             QList<QPair<QString, QVariant>> rollback;
             for (int i = op.next - 2; i >= 0; --i) rollback.append({op.values[i].first, op.previous.value(op.values[i].first)});
@@ -1463,18 +819,133 @@ void CompanionController::toolbarParameterSaved(const QString& name, bool succes
         finishToolbarOperation("Configuration rejected; refresh before retrying");
         return;
     }
+    settleWaitingSteps("done");
+    addOperationStep("rx", QStringLiteral("ACK ACCEPTED"), "done");
+    if (!op.rollingBack) op.progress = qMin(1.0, op.progress + (op.subsystem ? 0.5 : 1.0) / op.values.size());
     advanceToolbarOperation();
 }
 
 void CompanionController::finishToolbarOperation(const QString& error)
 {
     if (!_toolbarOperation) return;
-    const auto group = _toolbarOperation->group;
+    auto &op = *_toolbarOperation;
+    const auto group = op.group;
+    _setAckTimer->stop();
     _toolbarOperationTimer->stop();
+    settleWaitingSteps(error.isEmpty() ? "done" : "error");
+    if (error.isEmpty()) {
+        addOperationStep("info", op.notSaved ? tr("Chưa lưu được") : tr("Đã lưu"), op.notSaved ? "error" : "done");
+        op.progress = 1.0;
+    } else {
+        addOperationStep("info", error, "error");
+    }
+    publishOperation(error.isEmpty() ? QStringLiteral("confirmed") : QStringLiteral("error"), error);
     _toolbarOperation.reset();
     _toolbarErrors[group] = error;
     emit toolbarStateChanged();
     if (!error.isEmpty() && _activeVehicle) _paramService->requestParameters(_activeVehicle);
+}
+
+QVariantMap CompanionController::operationState(const QString& origin) const
+{
+    return _lastOperation.value(origin, QVariantMap{{"active", false}, {"progress", 0.0}, {"steps", QVariantList()},
+                                                    {"error", QString()}, {"outcome", QString()}});
+}
+
+void CompanionController::addOperationStep(const QString& direction, const QString& text, const QString& state)
+{
+    if (!_toolbarOperation) return;
+    auto& op = *_toolbarOperation;
+    op.steps.append({direction, text, state, _toolbarClock.elapsed() - op.startedMs});
+    while (op.steps.size() > 30) op.steps.removeFirst();
+    publishOperation(QString());
+}
+
+void CompanionController::settleWaitingSteps(const QString& state)
+{
+    if (!_toolbarOperation) return;
+    for (auto& step : _toolbarOperation->steps) {
+        if (step.state == QLatin1String("waiting")) step.state = state;
+    }
+}
+
+void CompanionController::publishOperation(const QString& outcome, const QString& error)
+{
+    if (!_toolbarOperation) return;
+    const auto& op = *_toolbarOperation;
+    QVariantList steps;
+    for (const auto& step : op.steps) {
+        steps.append(QVariantMap{{"direction", step.direction}, {"text", step.text}, {"state", step.state}, {"elapsedMs", step.elapsedMs}});
+    }
+    _lastOperation[op.origin] = QVariantMap{{"active", outcome.isEmpty()}, {"progress", op.progress}, {"steps", steps},
+                                            {"error", error}, {"outcome", outcome}};
+    emit toolbarStateChanged();
+}
+
+void CompanionController::onApplyProgress(uint8_t progress)
+{
+    if (!_toolbarOperation || !_toolbarOperation->applySent || _toolbarOperation->resultSeen) return;
+    auto& op = *_toolbarOperation;
+    if (progress == op.lastApplyProgress) return; // the CC repeats the last stage every 500 ms to keep the command alive
+    op.lastApplyProgress = progress;
+    op.progress = qMax(op.progress, 0.5 + progress / 200.0);
+    settleWaitingSteps("done");
+    addOperationStep("rx", stageText(op.subsystem, progress), "done");
+    if ((op.subsystem == 1 && progress >= 50) || (op.subsystem == 3 && progress >= 35)) op.gapTolerant = true;
+}
+
+void CompanionController::onApplyResult(uint8_t result, int failureCode)
+{
+    if (!_toolbarOperation || !_toolbarOperation->applySent || _toolbarOperation->resultSeen) return;
+    auto& op = *_toolbarOperation;
+    if (failureCode == Vehicle::MavCmdResultFailureNoResponseToCommand) {
+        // The ACK travels through the router/AP the CC is restarting: the change may well have worked.
+        if (op.gapTolerant) { enterTelemetryWait(); return; }
+        op.resultSeen = true;
+        finishToolbarOperation(tr("Companion không phản hồi"));
+        return;
+    }
+    op.resultSeen = true;
+    if (failureCode == Vehicle::MavCmdResultFailureDuplicateCommand) {
+        finishToolbarOperation(tr("Lệnh APPLY trước đó chưa kết thúc, thử lại sau"));
+        return;
+    }
+    if (result != MAV_RESULT_ACCEPTED) {
+        settleWaitingSteps("error");
+        QString reason = op.lastText;
+        if (reason.isEmpty()) {
+            reason = (result == MAV_RESULT_DENIED && op.group == "hotspot") ? tr("Mật khẩu hiện tại không đúng")
+                   : result == MAV_RESULT_TEMPORARILY_REJECTED ? tr("Companion từ chối tạm thời (đang arm, bận hoặc router chưa sẵn sàng)")
+                   : tr("Apply bị từ chối (%1)").arg(result);
+        }
+        finishToolbarOperation(reason);
+        return;
+    }
+    settleWaitingSteps("done");
+    addOperationStep("rx", QStringLiteral("ACK ACCEPTED"), "done");
+    op.waitingEffect = true;
+    checkToolbarEffect();
+}
+
+void CompanionController::enterTelemetryWait()
+{
+    if (!_toolbarOperation) return;
+    auto& op = *_toolbarOperation;
+    op.resultSeen = true;
+    op.waitingEffect = true;
+    op.unconfirmedOnTimeout = true;
+    settleWaitingSteps("done");
+    addOperationStep("info", op.subsystem == 3
+        ? tr("Đã gửi cấu hình hotspot mới. Mất kết nối WiFi là bình thường; hãy nối lại vào SSID mới")
+        : tr("Router đang khởi động lại, chờ telemetry"), "waiting");
+    checkToolbarEffect();
+}
+
+void CompanionController::setAckTimedOut()
+{
+    if (!_toolbarOperation || _toolbarOperation->awaiting.isEmpty()) return;
+    failOperationByTimeout(_toolbarOperation->sawInProgress ? tr("Không có kết quả sau %1 s").arg(finalAckMs() / 1000.0, 0, 'g', 2)
+                                                           : tr("Companion không phản hồi"));
 }
 
 bool CompanionController::setStreamParameter(const QString& stream, const QString& id, const QVariant& value)
@@ -1482,7 +953,7 @@ bool CompanionController::setStreamParameter(const QString& stream, const QStrin
     const bool camera = stream == "camera";
     if (!camera && stream != "vision") return false;
     const QStringList allowed = camera ? QStringList{"CC_CAM_RES", "CC_CAM_FPS", "CC_CAM_BR", "CC_CAM_CODEC"}
-        : QStringList{"CC_VIS_RES", "CC_VIS_FPS", "CC_VIS_BR", "CC_VIS_CODEC"};
+        : QStringList{"CC_VIS_RES", "CC_VIS_FPS", "CC_VIS_BR", "CC_VIS_CODEC", "CC_VIS_CONF"};
     if (!allowed.contains(id) || !streamState(stream).value("available").toBool()) return false;
     if (id.endsWith("CODEC")) {
         auto mask = _streamTelemetry.value(stream).value("supportedCodecs").toInt();
@@ -1492,43 +963,67 @@ bool CompanionController::setStreamParameter(const QString& stream, const QStrin
     return beginToolbarOperation(stream, {{id, value}});
 }
 
-bool CompanionController::setStreamEnabled(const QString& stream, bool enabled)
+bool CompanionController::setStreamEnabled(const QString& stream, bool enabled, const QString& url)
 {
-    if ((stream != "camera" && stream != "vision") || !streamState(stream).value("available").toBool()) return false;
-    if (!enabled && _toolbarOperation && _toolbarOperation->group == stream) {
-        _toolbarOperationTimer->stop(); _toolbarOperation.reset();
-    }
-    return beginToolbarOperation(stream, {{stream == "camera" ? "CC_CAM_FPV_EN" : "CC_VIS_EN", enabled ? 1 : 0}});
-}
-
-bool CompanionController::connectStream(const QString& stream, const QString& url)
-{
-    if ((stream != "camera" && stream != "vision") || !validPublishUrl(url)) return false;
+    const bool camera = stream == "camera";
+    if (!camera && stream != "vision") return false;
     const auto state = streamState(stream);
-    if (!state.value("available").toBool() || !state.value("enabled").toBool() || state.value("publishStatus").toInt() == 1 || state.value("publishStatus").toInt() == 2) return false;
-    const QString publishId = stream == "camera" ? "CC_CAM_PUB_EN" : "CC_VIS_PUB_EN";
+    if (!state.value("available").toBool()) return false;
+    const QString enId = camera ? "CC_CAM_FPV_EN" : "CC_VIS_EN";
+    const QString pubId = camera ? "CC_CAM_PUB_EN" : "CC_VIS_PUB_EN";
+    const QString urlId = camera ? "CC_CAM_PUB_URL" : "CC_VIS_OUT_URL";
+    if (!enabled) {
+        if (_toolbarOperation && _toolbarOperation->group == stream) {
+            _toolbarOperationTimer->stop(); _setAckTimer->stop(); _toolbarOperation.reset();
+        }
+        return beginToolbarOperation(stream, {{enId, 0}}, 0, stream);
+    }
+    if (!validPublishUrl(url)) {
+        _lastOperation[stream] = QVariantMap{{"active", false}, {"progress", 0.0}, {"outcome", QStringLiteral("error")},
+            {"error", tr("Địa chỉ RTSP không hợp lệ")},
+            {"steps", QVariantList{QVariantMap{{"direction", "info"}, {"text", tr("Địa chỉ RTSP không hợp lệ")}, {"state", "error"}, {"elapsedMs", 0}}}}};
+        emit toolbarStateChanged();
+        return false;
+    }
+    // ON = address (if it changed), then the stream, then publishing. Steps telemetry already shows as done are skipped.
     QList<QPair<QString, QVariant>> values;
-    if (_paramService->confirmedValue(publishId).toBool()) values.append({publishId, 0});
-    values.append({stream == "camera" ? "CC_CAM_PUB_URL" : "CC_VIS_OUT_URL", url});
-    values.append({publishId, 1});
-    return beginToolbarOperation(stream, values);
+    QStringList skipped;
+    if (url != state.value("configuredUrl").toString()) values.append({urlId, url});
+    if (state.value("enabled").toBool()) skipped << tr("Đã ON theo telemetry"); else values.append({enId, 1});
+    if (state.value("publishStatus").toInt() == 2) skipped << tr("Đang publish theo telemetry"); else values.append({pubId, 1});
+    if (values.isEmpty()) {
+        QVariantList steps;
+        for (const auto& note : skipped) steps.append(QVariantMap{{"direction", "info"}, {"text", note}, {"state", "skipped"}, {"elapsedMs", 0}});
+        _lastOperation[stream] = QVariantMap{{"active", false}, {"progress", 1.0}, {"outcome", QStringLiteral("confirmed")}, {"error", QString()}, {"steps", steps}};
+        emit toolbarStateChanged();
+        return true;
+    }
+    return beginToolbarOperation(stream, values, 0, stream, skipped);
 }
 
-bool CompanionController::disconnectStream(const QString& stream)
+bool CompanionController::setAiBranch(bool enabled)
 {
-    if ((stream != "camera" && stream != "vision") || !streamState(stream).value("available").toBool()) return false;
-    return beginToolbarOperation(stream, {{stream == "camera" ? "CC_CAM_PUB_EN" : "CC_VIS_PUB_EN", 0}});
+    // The AI branch belongs to the camera group; the Vision popup shows its progress.
+    if (!streamState("camera").value("available").toBool()) return false;
+    return beginToolbarOperation("camera", {{"CC_CAM_AI_EN", enabled ? 1 : 0}}, 0, "vision");
 }
 
-bool CompanionController::setLinkBaud(int index, int baud)
+bool CompanionController::setLinkConfig(int index, const QString& port, int baud)
 {
     if (index < 0 || index > 1) return false;
+    QVariantMap self, other;
     for (const auto& v : serialLinks()) {
         const auto link = v.toMap();
-        if (link.value("index").toInt() == index && link.value("fresh").toBool())
-            return beginToolbarOperation("links", {{QString("CC_L%1_BAUD").arg(index), baud}}, 1);
+        if (link.value("index").toInt() == index) self = link;
+        else if (link.value("index").toInt() == 1 - index) other = link;
     }
-    return false;
+    if (!self.value("fresh").toBool()) return false;
+    if (!other.isEmpty() && other.value("port").toString() == port) {
+        _toolbarErrors["links"] = tr("Cổng đang được dùng bởi %1").arg(other.value("name").toString());
+        emit toolbarStateChanged();
+        return false;
+    }
+    return beginToolbarOperation("links", {{QString("CC_L%1_PORT").arg(index), port}, {QString("CC_L%1_BAUD").arg(index), baud}}, 1, "companion");
 }
 
 bool CompanionController::applyHotspot(const QVariantMap& draft)
@@ -1542,19 +1037,27 @@ bool CompanionController::applyHotspot(const QVariantMap& draft)
 
 void CompanionController::checkToolbarEffect()
 {
-    if (!_toolbarOperation || !_toolbarOperation->waitingEffect) return;
+    if (!_toolbarOperation) return;
+    // The CC stopped answering after a stage that drops the link: the result can only come from telemetry now.
+    if (_toolbarOperation->applySent && !_toolbarOperation->resultSeen && _toolbarOperation->gapTolerant &&
+        !companionState().value("connected").toBool()) {
+        enterTelemetryWait();
+        return;
+    }
+    if (!_toolbarOperation->waitingEffect) return;
     const auto &op = *_toolbarOperation;
     if (op.subsystem == 1) {
         for (auto it = op.effectCandidate.cbegin(); it != op.effectCandidate.cend(); ++it) {
-            const auto match = QRegularExpression("^CC_L([0-7])_BAUD$").match(it.key());
+            const auto match = QRegularExpression("^CC_L([0-7])_(BAUD|PORT)$").match(it.key());
             if (!match.hasMatch()) return;
             const int index = match.captured(1).toInt();
+            const QString field = match.captured(2) == "BAUD" ? QStringLiteral("baudrate") : QStringLiteral("port");
             bool confirmed = false;
             for (const auto &v : serialLinks()) {
                 const auto link = v.toMap();
                 if (link.value("index").toInt() == index && link.value("fresh").toBool() &&
                     _toolbarReceived.value(QString("link:%1").arg(index), -1) > op.effectAfter &&
-                    link.value("baudrate").toInt() == it.value().toInt()) confirmed = true;
+                    link.value(field).toString() == it.value().toString()) confirmed = true;
             }
             if (!confirmed) return;
         }
@@ -1567,6 +1070,7 @@ void CompanionController::checkToolbarEffect()
             else if (candidate.toString() != active.value(field.second).toString()) return;
         }
     } else return;
+    addOperationStep("rx", tr("Telemetry xác nhận cấu hình mới"), "done");
     finishToolbarOperation();
 }
 
@@ -1574,15 +1078,36 @@ void CompanionController::toolbarTimedOut()
 {
     if (!_toolbarOperation) return;
     auto &op = *_toolbarOperation;
+    if (op.unconfirmedOnTimeout) {
+        // Telemetry never confirmed it, but nothing failed either: leave the steps for the user to read.
+        const auto group = op.group;
+        _setAckTimer->stop();
+        _toolbarOperationTimer->stop();
+        publishOperation(QStringLiteral("unconfirmed"));
+        _toolbarOperation.reset();
+        _toolbarErrors[group].clear();
+        emit toolbarStateChanged();
+        return;
+    }
+    failOperationByTimeout(tr("Hết thời gian chờ, chưa rõ kết quả"));
+}
+
+void CompanionController::failOperationByTimeout(const QString& reason)
+{
+    if (!_toolbarOperation) return;
+    auto &op = *_toolbarOperation;
+    _setAckTimer->stop();
+    settleWaitingSteps("error");
     if (op.subsystem && !op.waitingCommand && !op.rollingBack && _activeVehicle && !_activeVehicle->armed()) {
         QList<QPair<QString, QVariant>> rollback;
         // Include the last sent stage: its effect is uncertain when its ACK was lost.
         for (int i = op.next - 1; i >= 0; --i) rollback.append({op.values[i].first, op.previous.value(op.values[i].first)});
         if (!rollback.isEmpty()) {
+            addOperationStep("info", reason, "error");
             op.values = rollback; op.next = 0; op.rollingBack = true; op.rollbackError = "Stage timed out";
-            _toolbarOperationTimer->start(5000);
+            _toolbarOperationTimer->start(firstAckMs() + finalAckMs());
             advanceToolbarOperation(); return;
         }
     }
-    finishToolbarOperation("Timed out; effect unknown, refresh readback before retrying");
+    finishToolbarOperation(reason + QStringLiteral("; effect unknown, refresh readback before retrying"));
 }

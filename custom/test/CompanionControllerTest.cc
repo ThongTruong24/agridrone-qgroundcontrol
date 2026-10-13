@@ -4,6 +4,7 @@
 #include <QtQml/QQmlEngine>
 #include <QtGui/QWindow>
 #include <QtTest/QSignalSpy>
+#include <QtCore/QRegularExpression>
 #include <cstring>
 #include <memory>
 
@@ -102,6 +103,148 @@ void packNetworkForTest(mavlink_message_t* message)
     copyField(packet.ap_key_mgmt, "WPA-PSK");
     copyField(packet.ap_hw_mode, "g");
     mavlink_msg_cc_telemetry_network_encode(42, 191, message, &packet);
+}
+
+// ---- 2026-10-12 helpers: what the CC would send, injected the way the vehicle's link delivers it ----
+uint8_t extTypeFor(const QVariant& v)
+{
+    if (v.typeId() == QMetaType::QString) return MAV_PARAM_EXT_TYPE_CUSTOM;
+    if (v.typeId() == QMetaType::Double) return MAV_PARAM_EXT_TYPE_REAL32;
+    return v.toUInt() > 1 ? MAV_PARAM_EXT_TYPE_UINT32 : MAV_PARAM_EXT_TYPE_UINT8;
+}
+
+void encodeExt(const QVariant& v, uint8_t type, char raw[128])
+{
+    std::memset(raw, 0, 128);
+    if (type == MAV_PARAM_EXT_TYPE_CUSTOM) {
+        const auto bytes = v.toString().toUtf8();
+        std::memcpy(raw, bytes.constData(), qMin(bytes.size(), qsizetype(127)));
+    } else if (type == MAV_PARAM_EXT_TYPE_REAL32) {
+        const float number = v.toFloat();
+        std::memcpy(raw, &number, sizeof(number));
+    } else if (type == MAV_PARAM_EXT_TYPE_UINT32) {
+        const uint32_t number = v.toUInt();
+        std::memcpy(raw, &number, sizeof(number));
+    } else {
+        raw[0] = static_cast<char>(v.toUInt());
+    }
+}
+
+void primeParam(CompanionController& c, uint8_t system, const char* id, const QVariant& v)
+{
+    char raw[128];
+    const uint8_t type = extTypeFor(v);
+    encodeExt(v, type, raw);
+    mavlink_message_t m{};
+    mavlink_msg_param_ext_value_pack(system, 191, &m, id, raw, type, 40, 0);
+    c.processMessageForTest(m);
+}
+
+void ackParamSet(CompanionController& c, uint8_t system, const char* id, const QVariant& v, uint8_t result = PARAM_ACK_ACCEPTED)
+{
+    char raw[128];
+    const uint8_t type = extTypeFor(v);
+    encodeExt(v, type, raw);
+    mavlink_message_t m{};
+    mavlink_msg_param_ext_ack_pack(system, 191, &m, id, raw, type, result);
+    c.processMessageForTest(m);
+}
+
+uint8_t lastSetType(MockLink* link)
+{
+    mavlink_message_t sent{};
+    mavlink_param_ext_set_t p{};
+    if (link->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, sent)) mavlink_msg_param_ext_set_decode(&sent, &p);
+    return p.param_type;
+}
+
+QString lastSetId(MockLink* link)
+{
+    mavlink_message_t sent{};
+    mavlink_param_ext_set_t p{};
+    if (link->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, sent)) mavlink_msg_param_ext_set_decode(&sent, &p);
+    return QString::fromLatin1(p.param_id, qstrnlen(p.param_id, 16));
+}
+
+void sendLinks(CompanionController& c, uint8_t system, uint32_t fcBaud, uint32_t siyiBaud)
+{
+    mavlink_message_t first{}, second{};
+    packLinksForTest(system, 191, &first, fcBaud, siyiBaud, 0, 0, 0, 3, "ttyUSB0", "ttyUSB1", &second);
+    c.processMessageForTest(first);
+    c.processMessageForTest(second);
+}
+
+// Both configurable links known to the controller, readback equal to telemetry.
+void primeLinksAndParams(CompanionController& c, uint8_t system)
+{
+    sendLinks(c, system, 921600, 115200);
+    primeParam(c, system, "CC_L0_PORT", QString("ttyUSB0"));
+    primeParam(c, system, "CC_L1_PORT", QString("ttyUSB1"));
+    primeParam(c, system, "CC_L0_BAUD", 921600u);
+    primeParam(c, system, "CC_L1_BAUD", 115200u);
+}
+
+void sendNetwork(CompanionController& c, uint8_t system, const char* ssid, const char* ip, bool dhcp, bool apUp = true)
+{
+    mavlink_cc_telemetry_network_t net{};
+    net.config_version = 1;
+    net.ap_status = apUp ? 1 : 0;
+    net.ap_prefix_length = 24;
+    net.ap_dhcp_enabled = dhcp;
+    copyField(net.ap_ssid, ssid);
+    copyField(net.ap_ip, ip);
+    mavlink_message_t m{};
+    mavlink_msg_cc_telemetry_network_encode(system, 191, &m, &net);
+    c.processMessageForTest(m);
+}
+
+void primeHotspot(CompanionController& c, uint8_t system)
+{
+    sendNetwork(c, system, "Existing", "192.168.10.1", true);
+    primeParam(c, system, "CC_AP_SSID", QString("Existing"));
+    primeParam(c, system, "CC_AP_IP", QString("192.168.10.1/24"));
+    primeParam(c, system, "CC_AP_DHCP", 1u);
+    primeParam(c, system, "CC_AP_PASS", QString("old-password"));
+}
+
+void sendCompanionHeartbeat(CompanionController& c, uint8_t system)
+{
+    mavlink_message_t m{};
+    mavlink_msg_heartbeat_pack(system, 191, &m, MAV_TYPE_ONBOARD_CONTROLLER, MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
+    c.processMessageForTest(m);
+}
+
+void sendStreamTelemetry(CompanionController& c, uint8_t system, bool camera, bool enabled, uint8_t publishStatus, uint8_t version = 1)
+{
+    mavlink_message_t m{};
+    if (camera) {
+        mavlink_cc_telemetry_camera_t t{};
+        t.config_version = version; t.fpv_enabled = enabled; t.publish_status = publishStatus; t.supported_codecs = 1;
+        mavlink_msg_cc_telemetry_camera_encode(system, 191, &m, &t);
+    } else {
+        mavlink_cc_telemetry_vision_t t{};
+        t.config_version = version; t.enabled = enabled; t.publish_status = publishStatus; t.supported_codecs = 1;
+        mavlink_msg_cc_telemetry_vision_encode(system, 191, &m, &t);
+    }
+    c.processMessageForTest(m);
+}
+
+// Camera stream state the controller needs before it accepts ON/OFF: telemetry plus the three readbacks.
+void primeCameraStream(CompanionController& c, uint8_t system, bool enabled, uint8_t publishStatus, const char* url)
+{
+    sendCompanionHeartbeat(c, system);
+    sendStreamTelemetry(c, system, true, enabled, publishStatus);
+    primeParam(c, system, "CC_CAM_PUB_URL", QString(url));
+    primeParam(c, system, "CC_CAM_FPV_EN", enabled ? 1u : 0u);
+    primeParam(c, system, "CC_CAM_PUB_EN", publishStatus == 2 ? 1u : 0u);
+    primeParam(c, system, "CC_CAM_RES", QString("1280x720"));
+}
+
+QStringList stepTexts(const QVariantMap& operation)
+{
+    QStringList out;
+    for (const auto& step : operation["steps"].toList()) out << step.toMap()["text"].toString();
+    return out;
 }
 }  // namespace
 
@@ -259,39 +402,6 @@ void CompanionControllerTest::_testStaleAndReset()
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QString());
 }
 
-void CompanionControllerTest::_testCompanionPageLoads()
-{
-    ignoreLogMessage("default", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("QFontDatabase: Cannot find font directory.*")));
-    // The headless test engine has no real window geometry, so the equal-width tab
-    // buttons (width: tabBar.width / 5) emit benign TabBar/TabButton binding-loop
-    // warnings that Qt resolves on its own. They do not affect the page instantiating.
-    ignoreLogMessage("default", QtWarningMsg,
-                     QRegularExpression(QStringLiteral(".*Binding loop detected.*")));
-    QQmlEngine engine;
-    engine.addImportPath(QStringLiteral("qrc:/qml"));
-    QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qml/Custom/AgriDrone/CompanionSettings.qml")));
-    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
-    std::unique_ptr<QObject> page(component.create());
-    QVERIFY2(page, qPrintable(component.errorString()));
-}
-
-void CompanionControllerTest::_testMissionAndLogFiltering()
-{
-    CompanionController controller;
-    controller.resetForTest();
-    mavlink_message_t message{};
-    mavlink_msg_thaco_external_xyz_trigger_pack(42, 1, &message, 123, 4567);
-    controller.processMessageForTest(message);
-    QVERIFY(controller.missionReceived());
-    QCOMPARE(controller.lastTriggerId(), 123);
-    QCOMPARE(controller.lastTriggerTimeBootMs(), 4567);
-    QVERIFY(controller.logMatchesFilter(QStringLiteral("MISSION:"), QStringLiteral("ALL"),
-                                        QStringLiteral("MISSION: trigger 123")));
-    QVERIFY(!controller.logMatchesFilter(QStringLiteral("MISSION:"), QStringLiteral("ALL"),
-                                         QStringLiteral("FC: connected")));
-}
-
 void CompanionVehicleLifecycleTest::_testDisconnectAndReconnectReset()
 {
     CompanionController controller;
@@ -327,175 +437,6 @@ void CompanionVehicleLifecycleTest::_testDisconnectAndReconnectReset()
     QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("second"));
 }
 
-void CompanionVehicleLifecycleTest::_testUartAckFilteringAndRetry()
-{
-    CompanionController controller;
-    _connectMockLinkNoInitialConnectSequence();
-    QVERIFY(vehicle());
-
-    mavlink_message_t message{};
-    mavlink_message_t siyiMsg{};
-    packLinksForTest(vehicle()->id(), 191, &message, 921600, 115200, 10, 20, 4.5F, 3, "fc-current", "siyi-current", &siyiMsg);
-    emit vehicle() -> mavlinkMessageReceived(message);
-    emit vehicle() -> mavlinkMessageReceived(siyiMsg);
-    QCOMPARE(controller.availablePorts(), (QStringList{QStringLiteral("fc-current"), QStringLiteral("siyi-current")}));
-
-    controller.applyLinksConfig(QStringLiteral("fc-new"), 460800, QStringLiteral("siyi-new"), 57600);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_SERIAL_LINK) >= 1, 3000);
-    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(static_cast<MAV_CMD>(44011), 191) >= 1, 3000);
-
-    mavlink_message_t sent{};
-    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_CC_SERIAL_LINK, sent));
-    mavlink_cc_serial_link_t sentLinks{};
-    mavlink_msg_cc_serial_link_decode(&sent, &sentLinks);
-    QCOMPARE(sentLinks.baudrate, 57600U);
-    QCOMPARE(sentLinks.status, 3);
-    QCOMPARE(QString::fromLatin1(sentLinks.port), QStringLiteral("siyi-new"));
-
-    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_LONG, sent));
-    mavlink_command_long_t sentCommand{};
-    mavlink_msg_command_long_decode(&sent, &sentCommand);
-    QCOMPARE(sentCommand.command, 44011);
-    QCOMPARE(sentCommand.target_system, vehicle()->id());
-    QCOMPARE(sentCommand.target_component, 191);
-    QCOMPARE(sentCommand.param1, 1.0F);
-    QCOMPARE(sentCommand.param2, 1.0F);
-
-    const auto sendAck = [&](quint8 systemId, quint8 componentId, quint16 command, MAV_RESULT result) {
-        mavlink_message_t ack{};
-        mavlink_msg_command_ack_pack(systemId, componentId, &ack, command, result, 0, 0,
-                                     MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId());
-        emit vehicle() -> mavlinkMessageReceived(ack);
-    };
-
-    sendAck(vehicle()->id(), 191, 44010, MAV_RESULT_ACCEPTED);
-    sendAck(vehicle()->id() + 1, 191, 44011, MAV_RESULT_ACCEPTED);
-    sendAck(vehicle()->id(), 192, 44011, MAV_RESULT_ACCEPTED);
-    mavlink_message_t wrongTargetAck{};
-    mavlink_msg_command_ack_pack(vehicle()->id(), 191, &wrongTargetAck, 44011, MAV_RESULT_ACCEPTED, 0, 0,
-                                 MAVLinkProtocol::instance()->getSystemId() == 1 ? 2 : 1,
-                                 MAVLinkProtocol::getComponentId());
-    emit vehicle() -> mavlinkMessageReceived(wrongTargetAck);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-
-    sendAck(vehicle()->id(), 191, 44011, MAV_RESULT_DENIED);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Failed"));
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("fc-current"));
-
-    controller.applyLinksConfig(QStringLiteral("fc-new"), 460800, QStringLiteral("siyi-new"), 57600);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-    controller._configTimedOut();
-    QCOMPARE(controller.configStatus(), QStringLiteral("Timeout"));
-
-    controller.applyLinksConfig(QStringLiteral("fc-new"), 460800, QStringLiteral("siyi-new"), 57600);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-    sendAck(vehicle()->id(), 191, 44011, MAV_RESULT_IN_PROGRESS);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-    sendAck(vehicle()->id(), 191, 44011, MAV_RESULT_ACCEPTED);
-    QCOMPARE(controller.configStatus(), QStringLiteral("WaitingTelemetry"));
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("fc-current"));
-
-    controller.saveLinksConfig();
-    QCOMPARE(controller.configStatus(), QStringLiteral("WaitingTelemetry"));
-    controller._confirmationTimedOut();
-    QCOMPARE(controller.configStatus(), QStringLiteral("Timeout"));
-
-    controller.applyLinksConfig(QStringLiteral("port-name-longer-than-fifteen"), 460800, QStringLiteral("siyi-new"),
-                                57600);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Failed"));
-    QCOMPARE(controller.configMessage(), QStringLiteral("UART port must fit within 15 UTF-8 bytes"));
-
-    controller.applyLinksConfig(QStringLiteral("fc-new"), 460800, QStringLiteral("siyi-new"), 57600);
-    sendAck(vehicle()->id(), 191, 44011, MAV_RESULT_ACCEPTED);
-    QCOMPARE(controller.configStatus(), QStringLiteral("WaitingTelemetry"));
-    mavlink_message_t siyiTelemetryMsg{};
-    packLinksForTest(vehicle()->id(), 191, &message, 460800, 57600, 10, 20, 4.5F, 3, "fc-new", "siyi-new", &siyiTelemetryMsg);
-    emit vehicle() -> mavlinkMessageReceived(message);
-    emit vehicle() -> mavlinkMessageReceived(siyiTelemetryMsg);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Success"));
-
-    controller.saveLinksConfig();
-    QCOMPARE(controller.configStatus(), QStringLiteral("Applying"));
-    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(static_cast<MAV_CMD>(44010), 191) >= 1, 3000);
-    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_LONG, sent));
-    mavlink_msg_command_long_decode(&sent, &sentCommand);
-    QCOMPARE(sentCommand.command, 44010);
-    QCOMPARE(sentCommand.target_system, vehicle()->id());
-    QCOMPARE(sentCommand.target_component, 191);
-    QCOMPARE(sentCommand.param1, 1.0F);
-    QCOMPARE(sentCommand.param2, 0.0F);
-    sendAck(vehicle()->id(), 191, 44010, MAV_RESULT_ACCEPTED);
-    QCOMPARE(controller.configStatus(), QStringLiteral("Success"));
-}
-
-void CompanionVehicleLifecycleTest::_testQmlDraftAndSaveGuard()
-{
-    ignoreLogMessage("default", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("QFontDatabase: Cannot find font directory.*")));
-    ignoreLogMessage("default", QtWarningMsg,
-                     QRegularExpression(QStringLiteral(".*Invalid image provider: image://coloredsvg/.*")));
-    _connectMockLinkNoInitialConnectSequence();
-    QVERIFY(vehicle());
-
-    QQmlEngine engine;
-    engine.addImportPath(QStringLiteral("qrc:/qml"));
-    QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qml/Custom/AgriDrone/CompanionSettings.qml")));
-    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
-    std::unique_ptr<QObject> page(component.create());
-    QVERIFY2(page, qPrintable(component.errorString()));
-    QObject* const tab = page->findChild<QObject*>(QStringLiteral("companionTelemetryTab"));
-    QObject* const saveButton = page->findChild<QObject*>(QStringLiteral("saveUartButton"));
-    QVERIFY(tab);
-    QVERIFY(saveButton);
-
-    mavlink_message_t telemetry{};
-    mavlink_message_t siyiTelemetry{};
-    packLinksForTest(vehicle()->id(), 191, &telemetry, 921600, 115200, 10, 20, 4.5F, 3, "fc-current", "siyi-current", &siyiTelemetry);
-    emit vehicle() -> mavlinkMessageReceived(telemetry);
-    emit vehicle() -> mavlinkMessageReceived(siyiTelemetry);
-    QTRY_VERIFY_WITH_TIMEOUT(saveButton->property("enabled").toBool(), 1000);
-
-    QVERIFY(tab->setProperty("_selectedFcPort", QStringLiteral("fc-new")));
-    QVERIFY(tab->setProperty("_selectedFcBaud", 460800));
-    QVERIFY(tab->setProperty("_userInteractedFc", true));
-    QVERIFY(tab->setProperty("_selectedSiyiPort", QStringLiteral("siyi-new")));
-    QVERIFY(tab->setProperty("_selectedSiyiBaud", 57600));
-    QVERIFY(tab->setProperty("_userInteractedSiyi", true));
-    QTRY_VERIFY_WITH_TIMEOUT(!saveButton->property("enabled").toBool(), 1000);
-
-    QVERIFY(QMetaObject::invokeMethod(tab, "sendFcDraft", Q_ARG(QVariant, QVariant(QStringLiteral("fc-new"))),
-                                      Q_ARG(QVariant, QVariant(460800))));
-    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(static_cast<MAV_CMD>(44011), 191) >= 1, 3000);
-    mavlink_message_t ack{};
-    mavlink_msg_command_ack_pack(vehicle()->id(), 191, &ack, 44011, MAV_RESULT_ACCEPTED, 0, 0,
-                                 MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId());
-    emit vehicle() -> mavlinkMessageReceived(ack);
-    packLinksForTest(vehicle()->id(), 191, &telemetry, 460800, 115200, 10, 20, 4.5F, 3, "fc-new", "siyi-current", &siyiTelemetry);
-    emit vehicle() -> mavlinkMessageReceived(telemetry);
-    emit vehicle() -> mavlinkMessageReceived(siyiTelemetry);
-    QTRY_VERIFY_WITH_TIMEOUT(!tab->property("_userInteractedFc").toBool(), 1000);
-    QVERIFY(tab->property("_userInteractedSiyi").toBool());
-    QCOMPARE(tab->property("_selectedSiyiPort").toString(), QStringLiteral("siyi-new"));
-    QVERIFY(!saveButton->property("enabled").toBool());
-
-    QVERIFY(QMetaObject::invokeMethod(tab, "sendSiyiDraft", Q_ARG(QVariant, QVariant(QStringLiteral("siyi-new"))),
-                                      Q_ARG(QVariant, QVariant(57600))));
-    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(static_cast<MAV_CMD>(44011), 191) >= 2, 3000);
-    emit vehicle() -> mavlinkMessageReceived(ack);
-    packLinksForTest(vehicle()->id(), 191, &telemetry, 460800, 57600, 10, 20, 4.5F, 3, "fc-new", "siyi-new", &siyiTelemetry);
-    emit vehicle() -> mavlinkMessageReceived(telemetry);
-    emit vehicle() -> mavlinkMessageReceived(siyiTelemetry);
-    QTRY_VERIFY_WITH_TIMEOUT(saveButton->property("enabled").toBool(), 1000);
-
-    QVERIFY(tab->setProperty("_selectedFcPort", QStringLiteral("unsaved")));
-    QVERIFY(tab->setProperty("_userInteractedFc", true));
-    QVERIFY(!saveButton->property("enabled").toBool());
-    _disconnectMockLink();
-    QTRY_VERIFY_WITH_TIMEOUT(!tab->property("_userInteractedFc").toBool(), 1000);
-    QCOMPARE(tab->property("_selectedFcPort").toString(), QString());
-}
-
 void CompanionControllerTest::_testToolbarLegacyAndIndependentStreams()
 {
     CompanionController controller;
@@ -524,7 +465,7 @@ void CompanionControllerTest::_testToolbarLegacyAndIndependentStreams()
     const auto state = controller.visionStreamState();
     QVERIFY(qAbs(state["current"].toMap()["fps"].toDouble() - 4.8) < 0.001);
     QCOMPARE(state["configured"].toMap()["fps"].toDouble(), 5.0);
-    QVERIFY(!controller.connectStream("camera", "rtmp://invalid"));
+    QVERIFY(!controller.setStreamEnabled("camera", true, "rtmp://invalid"));
     QVERIFY(!controller.setStreamParameter("vision", "CC_CAM_FPS", 15));
 }
 
@@ -592,7 +533,7 @@ Window {
     QVERIFY2(window, qPrintable(windowComponent.errorString()));
     QVERIFY(QTest::qWaitForWindowExposed(qobject_cast<QWindow *>(window.get())));
     QVERIFY(QMetaObject::invokeMethod(window.get(), "openCamera"));
-    QCOMPARE(window->property("opened").toString(), QString("Vehicle Camera Status"));
+    QCOMPARE(window->property("opened").toString(), QString("Vehicle Video Status"));
     QVERIFY(window->property("urlFocused").toBool());
     QVERIFY(QMetaObject::invokeMethod(window.get(), "openVision"));
     QCOMPARE(window->property("opened").toString(), QString("Vehicle Vision Status"));
@@ -600,7 +541,7 @@ Window {
     QCOMPARE(window->property("opened").toString(), QString("Vehicle Companion Status"));
 }
 
-void CompanionVehicleLifecycleTest::_testConnectUrlAckBeforeEnableAndVehicleCancel()
+void CompanionVehicleLifecycleTest::_testStreamOnUrlAckBeforeEnableAndVehicleCancel()
 {
     CompanionController controller;
     _connectMockLinkNoInitialConnectSequence();
@@ -651,8 +592,9 @@ Item {
     };
     value("CC_CAM_PUB_URL", "rtsp://localhost:8554/old", 0, false, 0);
     value("CC_CAM_PUB_EN", "", 0, false, 0);
+    value("CC_CAM_FPV_EN", "", 1, false, 0);
     const int count = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.connectStream("camera", "rtsp://localhost:8554/new"));
+    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/new")); // 2026-10-12: ON takes the address; no Connect button
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 1, 3000);
     value("CC_CAM_PUB_URL", "rtsp://localhost:8554/old", 0, true, PARAM_ACK_IN_PROGRESS);
     QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 1);
@@ -668,9 +610,10 @@ Item {
     QCOMPARE(parameter.target_component, uint8_t(191));
     value("CC_CAM_PUB_EN", "", 1, true, PARAM_ACK_ACCEPTED);
     QVERIFY(!controller.cameraStreamState()["pending"].toBool());
-    QVERIFY(controller.disconnectStream("camera"));
+    QVERIFY(controller.setStreamEnabled("camera", false)); // OFF stops the stream (the node ends publishing itself)
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 3, 3000);
-    value("CC_CAM_PUB_EN", "", 0, true, PARAM_ACK_ACCEPTED);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_FPV_EN"));
+    value("CC_CAM_FPV_EN", "", 0, true, PARAM_ACK_ACCEPTED);
     const auto stage = [&](const char *id, const QVariant &input, uint8_t type, bool ack = false, uint8_t result = PARAM_ACK_ACCEPTED) {
         char raw[128]{};
         if (type == MAV_PARAM_EXT_TYPE_CUSTOM) {
@@ -700,12 +643,13 @@ Item {
     stage("CC_L1_BAUD", 115200, MAV_PARAM_EXT_TYPE_UINT32);
     links(921600);
     const int baudCommandsBefore = mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191);
-    QVERIFY(controller.setLinkBaud(0, 57600));
+    QVERIFY(controller.setLinkConfig(0, "ttyUSB0", 57600));
     stage("CC_L0_BAUD", 57600, MAV_PARAM_EXT_TYPE_UINT32, true);
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191), baudCommandsBefore + 1, 3000);
     mavlink_message_t commandAck{};
     mavlink_msg_command_ack_pack(system, 191, &commandAck, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0, 0, 0, 0);
-    controller.processMessageForTest(commandAck);
+    // 2026-10-12: APPLY goes through the vehicle's command queue, so its ACK must arrive from the link.
+    mockLink()->respondWithMavlinkMessage(commandAck);
     QVERIFY(controller.companionState()["pending"].toBool()); // ACK alone is not active readback
     QTest::qWait(5);
     links(921600);
@@ -753,7 +697,7 @@ Item {
     keepAlive.start(500);
     const int timeoutSetsBefore = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
     const int timeoutCommandsBefore = mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191);
-    QVERIFY(controller.setLinkBaud(0, 38400));
+    QVERIFY(controller.setLinkConfig(0, "ttyUSB0", 38400));
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), timeoutSetsBefore + 2, 6500);
     QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, sent));
     mavlink_msg_param_ext_set_decode(&sent, &parameter);
@@ -777,7 +721,7 @@ Item {
     mavlink_msg_cc_telemetry_camera_encode(system, 191, &message, &camera);
     controller.processMessageForTest(message);
     const int beforeCancel = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.connectStream("camera", "rtsp://localhost:8554/another"));
+    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/another"));
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), beforeCancel + 1, 3000);
     _disconnectMockLink();
     value("CC_CAM_PUB_URL", "rtsp://localhost:8554/another", 0, true, PARAM_ACK_ACCEPTED);
@@ -804,4 +748,305 @@ void CompanionVehicleLifecycleTest::_testStreamOptionsFromCapabilityParams()
     controller.processMessageForTest(packet);
     QCOMPARE(controller.cameraStreamState()["options"].toMap()["resolution"].toStringList(),
              QStringList({"640x480", "1280x720"}));
+}
+
+// 2026-10-12: APPLY showed no progress; the CC's stage reports were invisible in QGC.
+void CompanionVehicleLifecycleTest::_testApplyProgressFromCompanionStages()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    QVERIFY(vehicle());
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system);
+    const int sets = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), sets + 1, 3000);
+    ackParamSet(controller, system, "CC_L1_BAUD", 57600u);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191) >= 1, 3000);
+
+    mavlink_message_t text{}, noise{}, ack{};
+    mavlink_msg_statustext_pack(system, 191, &text, MAV_SEVERITY_INFO, "Links: reopening serial ports", 0, 0);
+    controller.processMessageForTest(text);
+    mavlink_msg_statustext_pack(system, 191, &noise, MAV_SEVERITY_WARNING, "Some CC parameters are unavailable", 0, 0);
+    controller.processMessageForTest(noise);
+    mavlink_msg_command_ack_pack(system, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50, 0, 0, 0);
+    mockLink()->respondWithMavlinkMessage(ack);
+
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["progress"].toDouble(), 0.75, 2000);
+    const auto texts = stepTexts(controller.operationState("companion"));
+    QVERIFY(texts.contains(QStringLiteral("PARAM_EXT_SET CC_L1_BAUD=57600")));
+    QVERIFY(texts.contains(QStringLiteral("Links: reopening serial ports")));
+    QVERIFY(std::any_of(texts.cbegin(), texts.cend(), [](const QString& t) { return t.contains("Router mở lại cổng"); }));
+    QVERIFY(!std::any_of(texts.cbegin(), texts.cend(), [](const QString& t) { return t.contains("unavailable"); }));
+}
+
+// 2026-10-12: the router restart drops the CC's ACK; QGC reported a failure although the link had changed.
+void CompanionVehicleLifecycleTest::_testLinkApplyGapConfirmedByTelemetry()
+{
+    CompanionController controller;
+    // The router/AP restart is exactly what makes the command queue give up on the final ACK.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg, QRegularExpression(QStringLiteral("Giving up sending command after max retries: MAV_CMD\\(44011\\)")));
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system);
+    const int sets = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), sets + 1, 3000);
+    ackParamSet(controller, system, "CC_L1_BAUD", 57600u);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191) >= 1, 3000);
+    mavlink_message_t ack{};
+    mavlink_msg_command_ack_pack(system, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50, 0, 0, 0);
+    mockLink()->respondWithMavlinkMessage(ack);
+    // no final ACK: the command queue gives up, QGC waits for telemetry instead of reporting a failure
+    QTRY_VERIFY_WITH_TIMEOUT(stepTexts(controller.operationState("companion")).contains(QStringLiteral("Router đang khởi động lại, chờ telemetry")), 3000);
+    QVERIFY(controller.operationState("companion")["error"].toString().isEmpty());
+
+    QTRY_COMPARE_WITH_TIMEOUT(([&]() { sendLinks(controller, system, 921600, 57600); return controller.operationState("companion")["outcome"].toString(); })(),
+                              QString("confirmed"), 4000);
+    for (const auto& step : controller.operationState("companion")["steps"].toList()) QVERIFY(step.toMap()["state"].toString() != "error");
+}
+
+// 2026-10-12: with the hotspot restarting, QGC may lose its own WiFi; that is not a failure.
+void CompanionVehicleLifecycleTest::_testHotspotApplyGapConfirmedByTelemetry()
+{
+    CompanionController controller;
+    // The router/AP restart is exactly what makes the command queue give up on the final ACK.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg, QRegularExpression(QStringLiteral("Giving up sending command after max retries: MAV_CMD\\(44011\\)")));
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system); // makes the CC the telemetry source
+    primeHotspot(controller, system);
+    QVERIFY(controller.applyHotspot({{"ssid", "Candidate"}, {"ipCidr", "192.168.11.1/24"}, {"dhcpEnabled", true}}));
+    const auto next = [&](const char* id, const QVariant& v, int count) {
+        QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET) >= count, 3000);
+        QCOMPARE(lastSetId(mockLink()), QString(id));
+        ackParamSet(controller, system, id, v);
+    };
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    next("CC_AP_SSID", QString("Candidate"), base > 0 ? base : 1);
+    QTRY_VERIFY_WITH_TIMEOUT(lastSetId(mockLink()) == "CC_AP_IP", 3000);
+    ackParamSet(controller, system, "CC_AP_IP", QString("192.168.11.1/24"));
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191) >= 1, 3000);
+    mavlink_message_t ack{};
+    mavlink_msg_command_ack_pack(system, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 35, 0, 0, 0);
+    mockLink()->respondWithMavlinkMessage(ack);
+    QTRY_VERIFY_WITH_TIMEOUT(stepTexts(controller.operationState("companion")).contains(
+        QStringLiteral("Đã gửi cấu hình hotspot mới. Mất kết nối WiFi là bình thường; hãy nối lại vào SSID mới")), 3000);
+    QVERIFY(controller.operationState("companion")["error"].toString().isEmpty());
+
+    QTRY_COMPARE_WITH_TIMEOUT(([&]() { sendNetwork(controller, system, "Candidate", "192.168.11.1", true);
+                                       return controller.operationState("companion")["outcome"].toString(); })(),
+                              QString("confirmed"), 4000);
+}
+
+// 2026-10-12: a SET nobody answers must say so, not wait for the whole operation budget.
+void CompanionVehicleLifecycleTest::_testSetWithoutAnyAckReportsNoResponse()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system);
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["outcome"].toString(), QString("error"), 4000);
+    QVERIFY(controller.operationState("companion")["error"].toString().contains("không phản hồi"));
+    QVERIFY(stepTexts(controller.operationState("companion")).contains(QStringLiteral("(rollback) PARAM_EXT_SET CC_L1_BAUD=115200")));
+}
+
+// 2026-10-12: operation steps are visible to every GCS user; a passphrase must never be in them.
+void CompanionVehicleLifecycleTest::_testSecretNeverAppearsInOperationSteps()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system);
+    primeHotspot(controller, system);
+    QVERIFY(controller.applyHotspot({{"ssid", "Existing"}, {"ipCidr", "192.168.10.1/24"}, {"dhcpEnabled", true},
+                                     {"password", "Secret-Canary-123"}}));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_AP_PASS"), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["steps"].toList().size() >= 1, true, 1000);
+    ackParamSet(controller, system, "CC_AP_PASS", QString()); // a secret comes back empty
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191) >= 1, 3000);
+    const auto texts = stepTexts(controller.operationState("companion"));
+    QVERIFY(texts.contains(QStringLiteral("PARAM_EXT_SET CC_AP_PASS=<hidden>")));
+    for (const auto& t : texts) QVERIFY2(!t.contains("Secret-Canary-123"), qPrintable(t));
+}
+
+// 2026-10-12: ON used to need a separate Connect; now it takes the address from the field and sends URL, enable, publish in order.
+void CompanionVehicleLifecycleTest::_testStreamOnSendsUrlEnablePublishInOrder()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeCameraStream(controller, system, false, 0, "rtsp://localhost:8554/old");
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/new"));
+    QStringList order;
+    for (const char* id : {"CC_CAM_PUB_URL", "CC_CAM_FPV_EN", "CC_CAM_PUB_EN"}) {
+        QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + order.size() + 1, 3000);
+        order << lastSetId(mockLink());
+        ackParamSet(controller, system, id, QString(id).endsWith("URL") ? QVariant(QString("rtsp://localhost:8554/new")) : QVariant(1u));
+    }
+    QCOMPARE(order, (QStringList{"CC_CAM_PUB_URL", "CC_CAM_FPV_EN", "CC_CAM_PUB_EN"}));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("camera")["outcome"].toString(), QString("confirmed"), 2000);
+}
+
+// 2026-10-12: OFF only stops the stream; the node ends publishing by itself.
+void CompanionVehicleLifecycleTest::_testStreamOffSendsOnlyEnableZero()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeCameraStream(controller, system, true, 2, "rtsp://localhost:8554/live");
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamEnabled("camera", false));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_FPV_EN"));
+    ackParamSet(controller, system, "CC_CAM_FPV_EN", 0u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("camera")["outcome"].toString(), QString("confirmed"), 2000);
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1);
+}
+
+// 2026-10-12: ON decides from telemetry, not from the parameter cache: what already runs is skipped, with the reason shown.
+void CompanionVehicleLifecycleTest::_testStreamOnSkipsWhatTelemetryShowsDone()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeCameraStream(controller, system, true, 2, "rtsp://localhost:8554/live");
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/live"));
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
+    const auto texts = stepTexts(controller.operationState("camera"));
+    QVERIFY(texts.contains(QStringLiteral("Đã ON theo telemetry")));
+    QVERIFY(texts.contains(QStringLiteral("Đang publish theo telemetry")));
+    for (const auto& step : controller.operationState("camera")["steps"].toList()) QCOMPARE(step.toMap()["state"].toString(), QString("skipped"));
+
+    // a stale cache says the stream is off while telemetry says it runs: the enable is still not sent twice
+    primeParam(controller, system, "CC_CAM_FPV_EN", 0u);
+    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/live"));
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
+}
+
+// 2026-10-12: an address that is not rtsp://host/path is refused before anything is sent, and the popup is told why.
+void CompanionVehicleLifecycleTest::_testStreamOnRefusesInvalidAddress()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeCameraStream(controller, system, false, 0, "rtsp://localhost:8554/old");
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    for (const char* bad : {"", "rtmp://host/live", "rtsp://host", "not a url"}) QVERIFY2(!controller.setStreamEnabled("camera", true, bad), bad);
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
+    QCOMPARE(controller.operationState("camera")["outcome"].toString(), QString("error"));
+    QVERIFY(stepTexts(controller.operationState("camera")).contains(QStringLiteral("Địa chỉ RTSP không hợp lệ")));
+}
+
+// 2026-10-12: popups said only "Controls require current Companion firmware and telemetry".
+void CompanionVehicleLifecycleTest::_testStreamReasonTable()
+{
+    CompanionController controller;
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 1);
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 2);
+    sendCompanionHeartbeat(controller, system);
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 3);
+    QVERIFY(controller.streamReason("vision")["text"].toString().contains("Vision"));
+    QVERIFY(controller.streamReason("camera")["text"].toString().contains("Video"));
+    sendStreamTelemetry(controller, system, false, true, 0, 2);
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 5);
+    sendStreamTelemetry(controller, system, false, true, 0, 1);
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 7); // no CC_VIS_RES readback yet
+    controller.setReceivedAgeForTest("vision", 5000);
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 4);
+    QVERIFY(controller.streamReason("vision")["text"].toString().contains("lần cuối"));
+    sendStreamTelemetry(controller, system, false, true, 0, 1);
+    primeParam(controller, system, "CC_VIS_RES", QString("640x480"));
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 0);
+    QCOMPARE(controller.visionStreamState()["reason"].toMap()["code"].toInt(), 0);
+
+    primeLinksAndParams(controller, system);
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600)); // an operation started from the Companion popup
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 9);
+    controller.requestCcParameters();
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 6);
+}
+
+// 2026-10-12: the UART device could only be changed from the deleted Settings page.
+void CompanionVehicleLifecycleTest::_testLinkPortAndBaudApplyAndConflictGuard()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system); // link 0 ttyUSB0, link 1 ttyUSB1
+    QVERIFY(!controller.setLinkConfig(1, "ttyUSB0", 57600)); // that device belongs to link 0
+    QVERIFY(controller.companionState()["linkError"].toString().contains("Cổng đang được dùng"));
+
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB2", 57600));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_L1_PORT"));
+    ackParamSet(controller, system, "CC_L1_PORT", QString("ttyUSB2"));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 2, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_L1_BAUD"));
+    ackParamSet(controller, system, "CC_L1_BAUD", 57600u);
+    QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_THACO_APPLY_CONFIG, 191) >= 1, 3000);
+    mavlink_message_t ack{};
+    mavlink_msg_command_ack_pack(system, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0, 0, 0, 0);
+    mockLink()->respondWithMavlinkMessage(ack);
+
+    // the effect needs BOTH the new device and the new baud in telemetry
+    QTRY_VERIFY_WITH_TIMEOUT(([&]() { sendLinks(controller, system, 921600, 57600); return controller.operationState("companion")["active"].toBool(); })(), 2000); // baud alone is not enough
+    mavlink_message_t first{}, second{};
+    QTRY_COMPARE_WITH_TIMEOUT(([&]() {
+        packLinksForTest(system, 191, &first, 921600, 57600, 0, 0, 0, 3, "ttyUSB0", "ttyUSB2", &second);
+        controller.processMessageForTest(first); controller.processMessageForTest(second);
+        return controller.operationState("companion")["outcome"].toString(); })(), QString("confirmed"), 4000);
+}
+
+// 2026-10-12: with the AP off the hotspot popup was always blocked, leaving SSH as the only recovery.
+void CompanionVehicleLifecycleTest::_testHotspotApplyAllowedWhenApOff()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system);
+    primeHotspot(controller, system);
+    sendNetwork(controller, system, "Other", "192.168.10.1", true, true); // AP up, but not what the stage says
+    QVERIFY(!controller.applyHotspot({{"ssid", "Candidate"}, {"ipCidr", "192.168.11.1/24"}, {"dhcpEnabled", true}}));
+    sendNetwork(controller, system, "", "192.168.10.1", true, false);     // AP off: nothing broadcast to compare with
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.applyHotspot({{"ssid", "Candidate"}, {"ipCidr", "192.168.11.1/24"}, {"dhcpEnabled", true}}));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_AP_SSID"));
+}
+
+// 2026-10-12: Vision confidence and the AI branch had no control once Settings was removed.
+void CompanionVehicleLifecycleTest::_testVisionConfidenceAndAiBranch()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeLinksAndParams(controller, system);
+    sendStreamTelemetry(controller, system, false, true, 0);
+    sendStreamTelemetry(controller, system, true, true, 0);
+    primeParam(controller, system, "CC_VIS_CONF", 0.35);
+    primeParam(controller, system, "CC_CAM_AI_EN", 0u);
+    QCOMPARE(controller.visionStreamState()["aiBranch"].toBool(), false);
+    QVERIFY(qAbs(controller.visionStreamState()["confidence"].toDouble() - 0.35) < 0.001);
+
+    int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamParameter("vision", "CC_VIS_CONF", 0.5));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_VIS_CONF"));
+    QCOMPARE(lastSetType(mockLink()), uint8_t(MAV_PARAM_EXT_TYPE_REAL32));
+    ackParamSet(controller, system, "CC_VIS_CONF", 0.5);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("vision")["outcome"].toString(), QString("confirmed"), 2000);
+
+    base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setAiBranch(true));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_AI_EN"));
+    QCOMPARE(lastSetType(mockLink()), uint8_t(MAV_PARAM_EXT_TYPE_UINT8));
+    QVERIFY(controller.operationState("vision")["active"].toBool()); // progress shows in the Vision popup
 }

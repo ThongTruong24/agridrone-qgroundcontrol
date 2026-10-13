@@ -100,8 +100,6 @@ public:
         return ports;
     }
 
-    void sendLinksConfig(Vehicle* vehicle, int fcBaud, int siyiBaud, const QString& fcPort, const QString& siyiPort);
-
 signals:
     void linksChanged();
     void availablePortsChanged();

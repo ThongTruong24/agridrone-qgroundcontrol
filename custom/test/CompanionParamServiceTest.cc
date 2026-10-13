@@ -122,38 +122,6 @@ void CompanionParamServiceTest::_testParamExtAckHandling()
     QCOMPARE(saveSpy.first().at(1).toBool(), true);
 }
 
-void CompanionParamServiceTest::_testExportAndImport()
-{
-    QTemporaryDir tempDir;
-    QVERIFY(tempDir.isValid());
-    QString filePath = tempDir.filePath("test_cc_params.json");
-
-    CompanionParamService service;
-    service.stageParameter("CC_L0_BAUD", 460800);
-    service.stageParameter("CC_AP_SSID", "CUSTOM_SSID");
-
-    QVERIFY(service.exportParameters(filePath));
-    QVERIFY(QFile::exists(filePath));
-
-    // Reset service
-    service.resetState();
-    QCOMPARE(service.modifiedCount(), 0);
-
-    // Import back
-    QVERIFY(service.importParameters(filePath));
-    QVERIFY(service.modifiedCount() >= 2);
-
-    QVariantList list = service.paramList();
-    for (const auto& item : list) {
-        QVariantMap map = item.toMap();
-        if (map.value("name").toString() == "CC_L0_BAUD") {
-            QCOMPARE(map.value("value").toUInt(), 460800u);
-        } else if (map.value("name").toString() == "CC_AP_SSID") {
-            QCOMPARE(map.value("value").toString(), QStringLiteral("CUSTOM_SSID"));
-        }
-    }
-}
-
 void CompanionParamServiceTest::_testRejectsWrongComponentId()
 {
     CompanionParamService service;

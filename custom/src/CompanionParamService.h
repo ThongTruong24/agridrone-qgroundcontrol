@@ -80,10 +80,9 @@ public:
     void sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value);
 
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
+    bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
     QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
 
-    bool exportParameters(const QString& filePath);
-    bool importParameters(const QString& filePath);
 
 signals:
     void paramListChanged();
@@ -91,6 +90,7 @@ signals:
     void modifiedCountChanged();
     void groupsChanged();
     void parameterSaved(const QString& name, bool success, const QString& message);
+    void parameterAckInProgress(const QString& name); ///< the CC accepted the SET and is applying it
     void logMessage(const QString& category, const QString& direction, const QString& message, int severity);
 
 private slots:

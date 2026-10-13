@@ -62,8 +62,16 @@ ToolIndicatorPage {
                         readonly property bool isFresh: portRow.linkData ? portRow.linkData.fresh : false
                         readonly property int currentBaud: portRow.linkData && portRow.linkData.baudrate !== undefined ? portRow.linkData.baudrate : 0
 
+                        readonly property string currentPort: portRow.linkData && portRow.linkData.port !== undefined ? portRow.linkData.port : ""
                         property int selectedBaud: 0
+                        property string selectedPort: ""
                         property bool userEdited: false
+                        // The CC's detected devices, plus the one in use when it is not in that list.
+                        function portChoices() {
+                            const list = CompanionController.availablePorts.slice()
+                            if (portRow.currentPort !== "" && list.indexOf(portRow.currentPort) < 0) list.push(portRow.currentPort)
+                            return list
+                        }
 
                         function syncBaudCombo() {
                             var target = userEdited ? selectedBaud : currentBaud
@@ -75,6 +83,8 @@ ToolIndicatorPage {
                             }
                         }
 
+                        onCurrentPortChanged: { if (!userEdited) { selectedPort = currentPort; portCombo.currentIndex = portCombo.model.indexOf(currentPort) } }
+
                         onCurrentBaudChanged: {
                             if (!userEdited && currentBaud > 0 && !baudCombo.popup.visible) {
                                 selectedBaud = currentBaud
@@ -85,6 +95,7 @@ ToolIndicatorPage {
                         }
 
                         Component.onCompleted: {
+                            selectedPort = currentPort
                             if (currentBaud > 0) {
                                 selectedBaud = currentBaud
                                 syncBaudCombo()
@@ -98,6 +109,18 @@ ToolIndicatorPage {
                         LabelledLabel { label: qsTr("Baudrate"); labelText: portRow.isFresh ? portRow.linkData.baudrate : qsTr("N/A") }
                         LabelledLabel { label: qsTr("TX (B/s)"); labelText: portRow.isFresh ? Math.round(portRow.linkData.txRate) : qsTr("N/A") }
                         LabelledLabel { label: qsTr("RX (B/s)"); labelText: portRow.isFresh ? Math.round(portRow.linkData.rxRate) : qsTr("N/A") }
+
+                        QGCComboBox {
+                            id: portCombo
+                            Layout.fillWidth: true
+                            model: portRow.portChoices()
+                            currentIndex: model.indexOf(portRow.currentPort)
+                            enabled: page.writeAllowed && !page.system.pending && portRow.isFresh
+                            onActivated: (idx) => {
+                                portRow.selectedPort = textAt(idx)
+                                portRow.userEdited = (portRow.selectedPort !== portRow.currentPort || portRow.selectedBaud !== portRow.currentBaud)
+                            }
+                        }
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -114,7 +137,7 @@ ToolIndicatorPage {
                                 onActivated: (idx) => {
                                     var chosen = Number(textAt(idx))
                                     portRow.selectedBaud = chosen
-                                    portRow.userEdited = (chosen !== portRow.currentBaud)
+                                    portRow.userEdited = (chosen !== portRow.currentBaud || portRow.selectedPort !== portRow.currentPort)
                                 }
                             }
 
@@ -123,10 +146,10 @@ ToolIndicatorPage {
                                 Layout.alignment: Qt.AlignVCenter
                                 iconSource: "/custom/images/system-update.png"
                                 text: qsTr("Update")
-                                primary: portRow.selectedBaud > 0 && portRow.selectedBaud !== portRow.currentBaud
-                                enabled: page.writeAllowed && !page.system.pending && portRow.selectedBaud > 0 && portRow.selectedBaud !== portRow.currentBaud
+                                primary: portRow.selectedBaud > 0 && (portRow.selectedBaud !== portRow.currentBaud || portRow.selectedPort !== portRow.currentPort)
+                                enabled: page.writeAllowed && !page.system.pending && portRow.selectedBaud > 0 && (portRow.selectedBaud !== portRow.currentBaud || portRow.selectedPort !== portRow.currentPort)
                                 onClicked: {
-                                    page.localError = CompanionController.setLinkBaud(portRow.index, portRow.selectedBaud) ? "" : qsTr("Baudrate request unavailable")
+                                    page.localError = CompanionController.setLinkConfig(portRow.index, portRow.selectedPort, portRow.selectedBaud) ? "" : (page.system.linkError || qsTr("Request unavailable"))
                                 }
                             }
                         }
@@ -134,12 +157,13 @@ ToolIndicatorPage {
                 }
                 QGCLabel { text: qsTr("Networking"); font.bold: true }
                 LabelledLabel { label: qsTr("WiFi"); labelText: page.display(page.network.wifiName) }
-                LabelledLabel { label: qsTr("Status"); labelText: page.network.fresh ? (page.network.wifiConnected ? qsTr("CONNECTED") : qsTr("DISCONNECTED")) : qsTr("N/A") }
+                LabelledLabel { label: qsTr("WiFi status"); labelText: page.network.fresh ? (page.network.wifiConnected ? qsTr("CONNECTED") : qsTr("DISCONNECTED")) : qsTr("N/A") }
                 LabelledLabel { label: qsTr("Hotspot"); labelText: page.display(page.network.ssid) }
-                LabelledLabel { label: qsTr("Status"); labelText: page.network.fresh ? (page.network.open ? qsTr("OPEN") : qsTr("CLOSE")) : qsTr("N/A") }
+                LabelledLabel { label: qsTr("Hotspot status"); labelText: page.network.fresh ? (page.network.open ? qsTr("ON") : qsTr("OFF")) : qsTr("N/A") }
                 LabelledLabel { label: qsTr("IP/CIDR"); labelText: page.display(page.network.ipCidr) }
                 LabelledLabel { label: qsTr("DHCP server"); labelText: page.network.available ? (page.network.dhcpEnabled ? qsTr("ON") : qsTr("OFF")) : qsTr("N/A") }
                 QGCLabel { text: page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                CompanionOperationLog { operation: page.network.operation }
             }
         }
     }
@@ -187,9 +211,8 @@ ToolIndicatorPage {
                     password.clear()
                 }
             }
-            QGCLabel { text: page.network.pending ? qsTr("Waiting for hotspot effect…") : page.network.error || page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            QGCLabel { text: page.network.error || page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             QGCLabel { visible: !page.writeAllowed; text: page.activeVehicle && page.activeVehicle.armed ? qsTr("Configuration locked while armed") : qsTr("Configuration requires an active vehicle link"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            QGCLabel { text: qsTr("Apply does not Save. Use Companion settings to save defaults."); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         }
     }
 }

@@ -12,9 +12,7 @@ private slots:
     void _testGeneratedMessageDecoding();
     void _testSourceFiltering();
     void _testStaleAndReset();
-    void _testCompanionPageLoads();
     void _testToolbarPopupsLoad();
-    void _testMissionAndLogFiltering();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -23,8 +21,19 @@ class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
 
 private slots:
     void _testDisconnectAndReconnectReset();
-    void _testUartAckFilteringAndRetry();
-    void _testConnectUrlAckBeforeEnableAndVehicleCancel();
-    void _testQmlDraftAndSaveGuard();
+    void _testStreamOnUrlAckBeforeEnableAndVehicleCancel();
     void _testStreamOptionsFromCapabilityParams();
+    void _testApplyProgressFromCompanionStages();
+    void _testLinkApplyGapConfirmedByTelemetry();
+    void _testHotspotApplyGapConfirmedByTelemetry();
+    void _testSetWithoutAnyAckReportsNoResponse();
+    void _testSecretNeverAppearsInOperationSteps();
+    void _testStreamOnSendsUrlEnablePublishInOrder();
+    void _testStreamOffSendsOnlyEnableZero();
+    void _testStreamOnSkipsWhatTelemetryShowsDone();
+    void _testStreamOnRefusesInvalidAddress();
+    void _testStreamReasonTable();
+    void _testLinkPortAndBaudApplyAndConflictGuard();
+    void _testHotspotApplyAllowedWhenApOff();
+    void _testVisionConfidenceAndAiBranch();
 };

@@ -25,7 +25,13 @@ Item {
         return false
     }
 
-    readonly property string sectionName: control.section === "camera" ? qsTr("Camera") : control.section === "vision" ? qsTr("Vision") : qsTr("Companion")
+    // No telemetry at all (vehicle, Companion link or the node itself) is different from a device reporting itself off.
+    readonly property var reason: control.section === "camera" ? CompanionController.cameraStreamState.reason
+                                : control.section === "vision" ? CompanionController.visionStreamState.reason : null
+    readonly property bool noData: control.section === "companion" ? !control.connected
+                                 : !!(control.reason && control.reason.code >= 1 && control.reason.code <= 5)
+
+    readonly property string sectionName: control.section === "camera" ? qsTr("Video") : control.section === "vision" ? qsTr("Vision") : qsTr("Companion")
 
     Row {
         id: indicatorRow
@@ -52,8 +58,9 @@ Item {
 
             QGCLabel {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: control.connected ? qsTr("Connected") : qsTr("Disconnected")
-                color: control.connected ? qgcPal.colorGreen : qgcPal.colorRed
+                text: control.noData ? qsTr("No data") : control.connected ? qsTr("Connected") : qsTr("Disconnected")
+                color: control.noData ? qgcPal.text : control.connected ? qgcPal.colorGreen : qgcPal.colorRed
+                opacity: control.noData ? 0.6 : 1.0
                 font.pointSize: ScreenTools.smallFontPointSize
             }
 
