@@ -37,8 +37,9 @@ Row {
             required property var modelData
             required property int index
             readonly property bool selected: control.mode === segment.modelData.value
-            width: label.implicitWidth + ScreenTools.defaultFontPixelWidth * (control.fontSmall ? 1 : 2)
-            height: label.implicitHeight + ScreenTools.defaultFontPixelHeight * (control.fontSmall ? 0.2 : 0.5)
+            // An in-flight control on a tablet: at least 1.5 lines tall, also in the toolbar (about 3 lines high).
+            width: label.implicitWidth + ScreenTools.defaultFontPixelWidth * 2
+            height: Math.max(label.implicitHeight + ScreenTools.defaultFontPixelHeight * 0.5, ScreenTools.defaultFontPixelHeight * 1.5)
             radius: height / 4
             color: segment.selected ? (segment.modelData.value === 0 ? qgcPal.buttonHighlight : qgcPal.colorGreen) : qgcPal.button
             border.color: qgcPal.text

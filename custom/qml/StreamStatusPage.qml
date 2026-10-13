@@ -159,7 +159,7 @@ ToolIndicatorPage {
                         objectName: "streamModeSwitch"
                         mode: page.mode
                         busy: page.modeState.pendingMode !== page.mode
-                        enabled: page.reason.code === 0 && page.linkUp
+                        enabled: !page.modeState.blocked && page.linkUp
                     }
                     CompanionOperationLog { operation: page.modeState.operation || ({}) }
                     // Only a mode change can be cancelled: a stuck rebuild of the running settings is not undone by resending the mode.
@@ -169,7 +169,7 @@ ToolIndicatorPage {
                         text: qsTr("Hủy")
                         onClicked: CompanionController.cancelStreamOperation()
                     }
-                    QGCLabel { visible: page.reason.code === 9; text: page.reason.text; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    QGCLabel { visible: !!page.modeState.blocked; text: page.modeState.blocked || ""; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     QGCLabel { visible: page.localError !== ""; text: page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
 
                     QGCLabel { text: qsTr("Cấu hình Video"); font.bold: true; objectName: "videoConfig" }

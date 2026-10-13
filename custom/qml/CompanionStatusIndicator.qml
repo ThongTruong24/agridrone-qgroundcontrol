@@ -87,7 +87,8 @@ Item {
                 fontSmall: true
                 mode: control.modeState.mode !== undefined ? control.modeState.mode : -1
                 busy: control.modeState.pendingMode !== control.modeState.mode
-                enabled: !control.noData
+                // Disabled whenever a SET would be refused (the popup says why); a pending stream op does not block it.
+                enabled: !control.noData && !control.modeState.blocked
             }
         }
     }

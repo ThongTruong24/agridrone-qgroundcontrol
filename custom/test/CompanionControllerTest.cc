@@ -142,13 +142,14 @@ void primeParam(CompanionController& c, uint8_t system, const char* id, const QV
     c.processMessageForTest(m);
 }
 
-void ackParamSet(CompanionController& c, uint8_t system, const char* id, const QVariant& v, uint8_t result = PARAM_ACK_ACCEPTED)
+void ackParamSet(CompanionController& c, uint8_t system, const char* id, const QVariant& v, uint8_t result = PARAM_ACK_ACCEPTED,
+                 uint8_t component = 191)
 {
     char raw[128];
     const uint8_t type = extTypeFor(v, id);
     encodeExt(v, type, raw);
     mavlink_message_t m{};
-    mavlink_msg_param_ext_ack_pack(system, 191, &m, id, raw, type, result);
+    mavlink_msg_param_ext_ack_pack(system, component, &m, id, raw, type, result);
     c.processMessageForTest(m);
 }
 
@@ -980,6 +981,15 @@ void CompanionVehicleLifecycleTest::_testStreamModeProgressAndVideoRestart()
     QCOMPARE(lastSetId(mockLink()), QString("CC_STREAM_MODE"));
     QCOMPARE(lastSetType(mockLink()), uint8_t(MAV_PARAM_EXT_TYPE_UINT8));
     QCOMPARE(lastSetValue(mockLink()), 2);
+    {
+        mavlink_message_t sent{};
+        mavlink_param_ext_set_t parameter{};
+        QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, sent));
+        mavlink_msg_param_ext_set_decode(&sent, &parameter);
+        QCOMPARE(parameter.target_component, uint8_t(191));
+    }
+    ackParamSet(controller, system, "CC_STREAM_MODE", 2u, PARAM_ACK_ACCEPTED, 192); // not the CC: ignored
+    QVERIFY(controller.streamModeState()["modeOperation"].toBool());
     auto state = controller.streamModeState();
     QCOMPARE(state["mode"].toInt(), 0);        // the switch moves only when the CC confirms
     QCOMPARE(state["pendingMode"].toInt(), 2);
@@ -1172,4 +1182,139 @@ Item {
     QCOMPARE(dialogs.count(), 1);
     QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_STREAM_MODE"), 3000);
     QCOMPARE(lastSetValue(mockLink()), 2);
+}
+
+// 2026-10-13: a stuck settings rebuild (e.g. MediaMTX never releases /camera) blocked the mode switch, and with it the
+// only way out: a mode SET must drop the pending camera-group op (the CC ends it too) and start the mode change.
+void CompanionVehicleLifecycleTest::_testModeChangeEndsStuckSettingsOp()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    primeParam(controller, system, "CC_CAM_BR", 2000u);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamParameter("camera", "CC_CAM_BR", 4000));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    ackParamSet(controller, system, "CC_CAM_BR", 2000u, PARAM_ACK_IN_PROGRESS);
+    QVERIFY(controller.streamModeState()["blocked"].toString().isEmpty()); // the switch stays usable: it is the way out
+
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 2, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_STREAM_MODE"));
+    QCOMPARE(lastSetValue(mockLink()), 2);
+    auto state = controller.streamModeState();
+    QVERIFY(state["modeOperation"].toBool());
+    QCOMPARE(state["mode"].toInt(), 1);
+    QCOMPARE(state["pendingMode"].toInt(), 2);
+    QVERIFY(stepTexts(state["operation"].toMap()).contains(QStringLiteral("Bỏ thao tác đang chờ để đổi chế độ")));
+
+    ackParamSet(controller, system, "CC_CAM_BR", 2000u, PARAM_ACK_FAILED); // the CC ends the dropped op first
+    QVERIFY(controller.streamModeState()["operation"].toMap()["active"].toBool());
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 2u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.streamModeState()["operation"].toMap()["outcome"].toString(), QString("confirmed"), 2000);
+    QCOMPARE(controller.streamModeState()["mode"].toInt(), 2);
+}
+
+// 2026-10-13: a mode SET does not cancel a Vision inference op (CC_VIS_CONF/FPS run in their own CC slot), and QGC tracks
+// one op: the switch is refused with a visible reason instead of doing nothing.
+void CompanionVehicleLifecycleTest::_testModeRefusedWhileVisionOpPending()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    sendStreamTelemetry(controller, system, false, true, 0);
+    primeParam(controller, system, "CC_VIS_CONF", 0.35);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamParameter("vision", "CC_VIS_CONF", 0.5));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QVERIFY(!controller.streamModeState()["blocked"].toString().isEmpty());
+
+    QVERIFY(!controller.setStreamMode(2));
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1);
+    const auto operation = controller.operationState("stream");
+    QVERIFY(operation["active"].toBool());
+    QVERIFY(stepTexts(operation).contains(controller.streamModeState()["blocked"].toString()));
+    ackParamSet(controller, system, "CC_VIS_CONF", 0.5);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("confirmed"), 2000);
+    QVERIFY(controller.streamModeState()["blocked"].toString().isEmpty());
+}
+
+// 2026-10-13: the player restarted only when QGC's own mode op completed, so a late ACCEPTED or a readback that moved the
+// mode left it stopped while the CC streamed (black video in flight).
+void CompanionVehicleLifecycleTest::_testPlayerFollowsConfirmedMode()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    QSignalSpy restarts(&controller, &CompanionController::videoRestarted);
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_STREAM_MODE"), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("unconfirmed"), 2000);
+    QCOMPARE(restarts.count(), 0);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 2u); // late ACCEPTED after "CC không phản hồi"
+    QCOMPARE(restarts.count(), 1);
+    QCOMPARE(restarts.takeFirst().at(0).toInt(), 2);
+
+    primeParam(controller, system, "CC_STREAM_MODE", 0u); // readback, no op pending
+    QCOMPARE(restarts.count(), 1);
+    QCOMPARE(restarts.takeFirst().at(0).toInt(), 0);
+    primeParam(controller, system, "CC_STREAM_MODE", 1u);
+    QCOMPARE(restarts.count(), 1);
+    QCOMPARE(restarts.takeFirst().at(0).toInt(), 1);
+    primeParam(controller, system, "CC_STREAM_MODE", 1u); // same mode: no second restart
+    QCOMPARE(restarts.count(), 0);
+}
+
+// 2026-10-13: a keepalive of the replaced mode op can arrive after the new SET; it cleared expectCancelAck, so the replaced
+// op's FAILED then ended the new op with an error.
+void CompanionVehicleLifecycleTest::_testReplaceIgnoresStaleKeepalive()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    QVERIFY(controller.setStreamMode(0));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 2, 3000);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS); // keepalive of 1 -> 2, sent before the CC got the SET
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_FAILED);      // the CC cancels 1 -> 2
+    QVERIFY(controller.streamModeState()["operation"].toMap()["active"].toBool());
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 0u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.streamModeState()["operation"].toMap()["outcome"].toString(), QString("confirmed"), 2000);
+    QCOMPARE(controller.streamModeState()["mode"].toInt(), 0);
+}
+
+// 2026-10-13: replacing a mode op while the new one could not start (parameters loading) dropped the old op and published
+// nothing; the old op must stay and the refusal must be visible.
+void CompanionVehicleLifecycleTest::_testReplaceRefusedKeepsOldOp()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    controller.requestCcParameters();
+    QVERIFY(controller.ccParametersLoading());
+    const auto stepsBefore = controller.operationState("stream")["steps"].toList().size();
+
+    QVERIFY(!controller.setStreamMode(0));
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1);
+    const auto state = controller.streamModeState();
+    QVERIFY(state["modeOperation"].toBool());
+    QCOMPARE(state["pendingMode"].toInt(), 2);
+    const auto operation = state["operation"].toMap();
+    QVERIFY(operation["active"].toBool());
+    QCOMPARE(operation["steps"].toList().size(), stepsBefore + 1);
+    QCOMPARE(operation["steps"].toList().last().toMap()["state"].toString(), QString("error"));
 }

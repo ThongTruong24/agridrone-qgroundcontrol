@@ -308,7 +308,8 @@ public:
     Q_INVOKABLE bool setStreamMode(int mode);
     /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way.
     Q_INVOKABLE void cancelStreamOperation();
-    /// {mode (confirmed, -1 unknown), pendingMode, modeOperation, pending, operation, reason, visionFresh}
+    /// {mode (confirmed, -1 unknown), pendingMode, modeOperation, pending, operation, reason, visionFresh,
+    ///  blocked (why a mode SET would be refused now; empty = allowed)}
     QVariantMap streamModeState() const;
     Q_INVOKABLE bool setStreamParameter(const QString& stream, const QString& id, const QVariant& value);
     /// Why the popup of this stream cannot be used: {code, text}; code 0 = usable (see the table in the Fly View spec).
@@ -388,6 +389,10 @@ private:
     void toolbarTimedOut();
     void endUnconfirmed(const QString& note);
     bool modeOperationPending() const;
+    QString modeBlockedReason() const;
+    bool refuseStream(const QString& why);
+    void syncPlayerToMode();
+    int _playerMode{-1};             // the confirmed mode QGC's player was last (re)started for; -1 none yet
     void finishToolbarOperation(const QString& error = QString());
     void toolbarParameterSaved(const QString& name, bool success);
     QElapsedTimer _toolbarClock;
@@ -414,6 +419,7 @@ private:
         double progress{0.0};
         qint64 startedMs{0};
         bool sawInProgress{false};       // the awaited SET got ACK IN_PROGRESS
+        int inProgressAcks{0};           // IN_PROGRESS ACKs since the awaited SET
         bool expectCancelAck{false};     // a replaced mode operation: the CC answers it before the new one's first IN_PROGRESS
         bool applySent{false};
         bool resultSeen{false};

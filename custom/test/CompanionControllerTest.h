@@ -40,4 +40,9 @@ private slots:
     void _testInactiveGroupAckOnly();
     void _testStaleInProgressAfterFailedIgnored();
     void _testOffAsksWhenArmed();
+    void _testModeChangeEndsStuckSettingsOp();
+    void _testModeRefusedWhileVisionOpPending();
+    void _testPlayerFollowsConfirmedMode();
+    void _testReplaceIgnoresStaleKeepalive();
+    void _testReplaceRefusedKeepsOldOp();
 };

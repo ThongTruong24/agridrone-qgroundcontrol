@@ -100,13 +100,15 @@ CompanionController::CompanionController(QObject* parent)
         emit vehicleConnectedChanged();
     });
     connect(_linksService, &CompanionLinksService::availablePortsChanged, this, &CompanionController::availablePortsChanged);
-    connect(_paramService, &CompanionParamService::paramListChanged, this, &CompanionController::toolbarStateChanged);
+    connect(_paramService, &CompanionParamService::paramListChanged, this, [this]() { syncPlayerToMode(); emit toolbarStateChanged(); });
     connect(_paramService, &CompanionParamService::isLoadingChanged, this, &CompanionController::ccParametersLoadingChanged);
     connect(_paramService, &CompanionParamService::parameterAckInProgress, this, [this](const QString& name) {
         // Nothing pending for it: a keepalive that trails the final ACK (the CC may send one just after FAILED).
         if (!_toolbarOperation || _toolbarOperation->awaiting != name) return;
         auto& op = *_toolbarOperation;
-        op.expectCancelAck = false;
+        // The replaced op's keepalive may still come before its FAILED; the CC sends that FAILED before the new op's
+        // IN_PROGRESS, so only a second IN_PROGRESS proves the FAILED is not coming.
+        if (++op.inProgressAcks >= 2) op.expectCancelAck = false;
         if (!op.sawInProgress) addOperationStep("rx", QStringLiteral("ACK IN_PROGRESS"), "done"); // keepalives repeat every 500 ms
         op.sawInProgress = true;
         _setAckTimer->start(streamGroup(op.group) ? silenceMs() : finalAckMs());
@@ -785,6 +787,7 @@ void CompanionController::advanceToolbarOperation()
         const auto entry = op.values[op.next++];
         op.awaiting = entry.first;
         op.sawInProgress = false;
+        op.inProgressAcks = 0;
         const bool secret = _paramService->isSecret(entry.first);
         addOperationStep("tx", QStringLiteral("%1PARAM_EXT_SET %2=%3").arg(op.rollingBack ? QStringLiteral("(rollback) ") : QString(), entry.first,
                          secret ? QStringLiteral("<hidden>") : entry.second.toString()), "waiting");
@@ -843,15 +846,21 @@ void CompanionController::toolbarParameterSaved(const QString& name, bool succes
     settleWaitingSteps("done");
     addOperationStep("rx", QStringLiteral("ACK ACCEPTED"), "done");
     if (!op.rollingBack) op.progress = qMin(1.0, op.progress + (op.subsystem ? 0.5 : 1.0) / op.values.size());
-    const bool modeConfirmed = name == kModeId;
     advanceToolbarOperation();
-    if (modeConfirmed) {
-        // Reconnect QGC's player now instead of waiting for it to notice the old stream is gone.
-        const int mode = expected.toInt();
-        VideoManager::instance()->stopVideo();
-        if (mode != 0) VideoManager::instance()->startVideo();
-        emit videoRestarted(mode);
-    }
+}
+
+void CompanionController::syncPlayerToMode()
+{
+    // Any source moves the confirmed mode (own op, late ACCEPTED, readback); reconnect the player once per new mode
+    // instead of waiting for it to notice the old stream is gone. The first known mode only records the start state.
+    const QVariant confirmed = _paramService->confirmedValue(kModeId);
+    if (!confirmed.isValid() || confirmed.toInt() == _playerMode) return;
+    const bool first = _playerMode < 0;
+    _playerMode = confirmed.toInt();
+    if (first) return;
+    VideoManager::instance()->stopVideo();
+    if (_playerMode != 0) VideoManager::instance()->startVideo();
+    emit videoRestarted(_playerMode);
 }
 
 void CompanionController::finishToolbarOperation(const QString& error)
@@ -988,13 +997,7 @@ bool CompanionController::setStreamParameter(const QString& stream, const QStrin
     // camera_streamer owns the Vision video parameters too; only the inference ones need the Vision node.
     const bool visionNode = id == "CC_VIS_FPS" || id == "CC_VIS_CONF";
     if (!allowed.contains(id) || !streamState(visionNode ? "vision" : "camera").value("available").toBool()) return false;
-    if (id.endsWith("_URL") && !validPublishUrl(value.toString())) {
-        _lastOperation["stream"] = QVariantMap{{"active", false}, {"progress", 0.0}, {"outcome", QStringLiteral("error")},
-            {"error", tr("Địa chỉ RTSP không hợp lệ")},
-            {"steps", QVariantList{QVariantMap{{"direction", "info"}, {"text", tr("Địa chỉ RTSP không hợp lệ")}, {"state", "error"}, {"elapsedMs", 0}}}}};
-        emit toolbarStateChanged();
-        return false;
-    }
+    if (id.endsWith("_URL") && !validPublishUrl(value.toString())) return refuseStream(tr("Địa chỉ RTSP không hợp lệ"));
     if (id.endsWith("CODEC")) {
         auto mask = _streamTelemetry.value("camera").value("supportedCodecs").toInt();
         if ((value.toString() == "h264" && !(mask & 1)) || (value.toString() == "h265" && !(mask & 2)) ||
@@ -1008,6 +1011,28 @@ bool CompanionController::modeOperationPending() const
     return _toolbarOperation && _toolbarOperation->previous.contains(kModeId);
 }
 
+bool CompanionController::refuseStream(const QString& why)
+{
+    // Shown in the stream log: added to the running op, or as a refused one when nothing runs.
+    if (_toolbarOperation && _toolbarOperation->origin == QLatin1String("stream")) { addOperationStep("info", why, "error"); return false; }
+    _lastOperation["stream"] = QVariantMap{{"active", false}, {"progress", 0.0}, {"outcome", QStringLiteral("error")}, {"error", why},
+        {"steps", QVariantList{QVariantMap{{"direction", "info"}, {"text", why}, {"state", "error"}, {"elapsedMs", 0}}}}};
+    emit toolbarStateChanged();
+    return false;
+}
+
+QString CompanionController::modeBlockedReason() const
+{
+    const auto reason = streamReason("camera");
+    if (reason.value("code").toInt() != 0) return reason.value("text").toString();
+    // CC_VIS_CONF/FPS run in the CC's Vision slot, which a mode SET does not cancel, and QGC tracks one op at a time.
+    if (_toolbarOperation && _toolbarOperation->group == QLatin1String("vision")) {
+        const QString id = _toolbarOperation->values.first().first;
+        if (id == QLatin1String("CC_VIS_CONF") || id == QLatin1String("CC_VIS_FPS")) return tr("Đang chờ Vision áp dụng %1; đổi chế độ khi xong").arg(id);
+    }
+    return QString();
+}
+
 QVariantMap CompanionController::streamModeState() const
 {
     const bool modeOp = modeOperationPending();
@@ -1017,29 +1042,41 @@ QVariantMap CompanionController::streamModeState() const
     const bool visionFresh = _toolbarReceived.contains("vision") && _toolbarClock.elapsed() - _toolbarReceived.value("vision") <= 3500;
     return {{"mode", mode}, {"pendingMode", modeOp ? _toolbarOperation->values.first().second.toInt() : mode},
             {"modeOperation", modeOp}, {"pending", _toolbarOperation && streamGroup(_toolbarOperation->group)},
-            {"operation", operationState(QStringLiteral("stream"))}, {"reason", streamReason("camera")}, {"visionFresh", visionFresh}};
+            {"operation", operationState(QStringLiteral("stream"))}, {"reason", streamReason("camera")}, {"visionFresh", visionFresh},
+            {"blocked", modeBlockedReason()}};
 }
 
 bool CompanionController::setStreamMode(int mode)
 {
-    if (mode < 0 || mode > 2 || !streamState("camera").value("available").toBool()) return false;
-    if (!modeOperationPending()) {
+    if (mode < 0 || mode > 2) return false;
+    const QString blocked = modeBlockedReason();
+    if (!blocked.isEmpty()) return refuseStream(blocked);
+    const QString notSent = tr("Chưa gửi được yêu cầu đổi chế độ, thử lại");
+    if (!_toolbarOperation) {
         const auto confirmed = _paramService->confirmedValue(kModeId);
         if (confirmed.isValid() && confirmed.toInt() == mode) return true;
-        return beginToolbarOperation("camera", {{kModeId, mode}});
+        return beginToolbarOperation("camera", {{kModeId, mode}}) || refuseStream(notSent);
     }
+    // A camera-group op is pending: a mode op to replace, or a settings op (maybe a stuck rebuild) to drop. The CC ends
+    // either one on a CC_STREAM_MODE SET.
     const ToolbarOperation replaced = *_toolbarOperation;
-    if (replaced.values.first().second.toInt() == mode) return true;
-    // A new mode replaces the pending one; the CC cancels the old operation and answers it first.
-    _setAckTimer->stop();
+    const bool modeOp = replaced.previous.contains(kModeId);
+    if (modeOp && replaced.values.first().second.toInt() == mode) return true;
     _toolbarOperation.reset();
-    if (!beginToolbarOperation("camera", {{kModeId, mode}})) return false;
+    if (!beginToolbarOperation("camera", {{kModeId, mode}})) {
+        _toolbarOperation = replaced; // nothing was sent: the old op goes on
+        return refuseStream(notSent);
+    }
     auto& op = *_toolbarOperation;
-    op.previous[kModeId] = replaced.previous.value(kModeId);
-    op.expectCancelAck = true;
+    if (modeOp) {
+        // The CC answers the replaced mode op (same parameter) before the new one's first IN_PROGRESS.
+        op.previous[kModeId] = replaced.previous.value(kModeId);
+        op.expectCancelAck = true;
+    } // A dropped settings op's FAILED names another parameter, so `awaiting` already filters it.
     auto steps = replaced.steps;
     for (auto& step : steps) if (step.state == QLatin1String("waiting")) step.state = QStringLiteral("skipped");
-    steps.append({"info", tr("Đã hủy chuyển sang %1").arg(modeName(replaced.values.first().second.toInt())), "skipped", 0});
+    steps.append({"info", modeOp ? tr("Đã hủy chuyển sang %1").arg(modeName(replaced.values.first().second.toInt()))
+                                 : tr("Bỏ thao tác đang chờ để đổi chế độ"), "skipped", 0});
     op.steps = steps + op.steps;
     while (op.steps.size() > 30) op.steps.removeFirst();
     publishOperation(QString());
