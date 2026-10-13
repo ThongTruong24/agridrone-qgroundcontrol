@@ -496,12 +496,9 @@ void CompanionControllerTest::_testToolbarPopupsLoad()
         std::unique_ptr<QObject> page(component.createWithInitialProperties({{"expanded", true}}));
         QVERIFY2(page, qPrintable(component.errorString()));
         if (QString(name) == "StreamStatusPage") {
-            auto url = page->findChild<QObject*>("rtspDestination");
-            QVERIFY(url);
-            url->setProperty("text", "rtsp://localhost:8554/draft");
-            QVERIFY(QMetaObject::invokeMethod(url, "textEdited"));
-            QCOMPARE(page->property("draftUrl").toString(), QString("rtsp://localhost:8554/draft"));
-            QVERIFY(page->property("urlDirty").toBool());
+            // 2026-10-13: one merged page: the mode switch, Cancel, and both settings groups with their addresses.
+            for (const char* child : {"streamModeSwitch", "cancelStreamOperation", "videoConfig", "visionConfig",
+                                      "rtspDestination", "visionRtspDestination"}) QVERIFY2(page->findChild<QObject*>(child), child);
         }
     }
     QQmlComponent windowComponent(&engine);
@@ -519,7 +516,7 @@ Window {
         if (popup) popup.destroy()
         popup = component.createObject(contentItem, {expanded: true})
         opened = popup.title || "Vehicle Companion Status"
-        if (popup.draftUrl !== undefined) {
+        if (findItem(popup, "rtspDestination")) {
             var edit = findItem(popup, "rtspDestination")
             edit.forceActiveFocus()
             urlFocused = edit.activeFocus
@@ -533,8 +530,8 @@ Window {
         }
         return null
     }
-    function openCamera() { camera.children[1].clicked(null) }
-    function openCompanion() { companion.children[1].clicked(null) }
+    function openCamera() { camera.children[0].clicked(null) } // the indicator's MouseArea (under the mode switch)
+    function openCompanion() { companion.children[0].clicked(null) }
     Row {
         width: parent.width; height: 50
         CameraStatusIndicator { id: camera }
@@ -547,7 +544,7 @@ Window {
     QVERIFY2(window, qPrintable(windowComponent.errorString()));
     QVERIFY(QTest::qWaitForWindowExposed(qobject_cast<QWindow *>(window.get())));
     QVERIFY(QMetaObject::invokeMethod(window.get(), "openCamera"));
-    QCOMPARE(window->property("opened").toString(), QString("Vehicle Video Status"));
+    QCOMPARE(window->property("opened").toString(), QString("Vehicle Stream Status"));
     QVERIFY(window->property("urlFocused").toBool());
     QVERIFY(QMetaObject::invokeMethod(window.get(), "openCompanion"));
     QCOMPARE(window->property("opened").toString(), QString("Vehicle Companion Status"));
@@ -1132,4 +1129,47 @@ void CompanionVehicleLifecycleTest::_testStaleInProgressAfterFailedIgnored()
     QCOMPARE(controller.operationState("stream")["steps"].toList().size(), steps);
     QVERIFY(!controller.streamModeState()["modeOperation"].toBool());
     QCOMPARE(controller.streamModeState()["mode"].toInt(), 1);
+}
+
+// 2026-10-13: switching the camera Off in flight asks first; Video <-> Vision does not.
+void CompanionVehicleLifecycleTest::_testOffAsksWhenArmed()
+{
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    mockLink()->setArmed(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), 5000);
+    QQmlEngine engine;
+    engine.addImageProvider(QLatin1String(ColoredSvgImageProvider::ProviderId), new ColoredSvgImageProvider());
+    engine.addImportPath("qrc:/qml");
+    QQmlComponent component(&engine);
+    component.setData(R"QML(
+import QtQuick
+import QGroundControl
+import Custom.AgriDrone
+Item {
+    property var controller: CompanionController
+    property var qgc: QGroundControl
+    property alias modeSwitch: modeSwitch
+    StreamModeSwitch { id: modeSwitch; mode: 1 }
+}
+)QML", QUrl("qrc:/qml/stream-mode-switch-test.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create());
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto controller = qobject_cast<CompanionController*>(root->property("controller").value<QObject*>());
+    QVERIFY(controller);
+    primeStreamMode(*controller, system, 1);
+    QSignalSpy dialogs(root->property("qgc").value<QObject*>(), SIGNAL(showMessageDialogRequested(QObject*,QString,QString,int,QJSValue,QJSValue)));
+    QVERIFY(dialogs.isValid());
+    auto modeSwitch = root->property("modeSwitch").value<QObject*>();
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(QMetaObject::invokeMethod(modeSwitch, "requested", Q_ARG(int, 0)));
+    QCOMPARE(dialogs.count(), 1);
+    QCOMPARE(dialogs.first().at(1).toString(), QString("Tắt camera khi đang bay?"));
+    QVERIFY(!controller->streamModeState()["pending"].toBool()); // nothing sent before the user confirms
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
+    QVERIFY(QMetaObject::invokeMethod(modeSwitch, "requested", Q_ARG(int, 2)));
+    QCOMPARE(dialogs.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_STREAM_MODE"), 3000);
+    QCOMPARE(lastSetValue(mockLink()), 2);
 }

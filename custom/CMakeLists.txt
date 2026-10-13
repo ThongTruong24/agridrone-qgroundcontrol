@@ -18,6 +18,7 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CameraStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamStatusPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamModeSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionToggleSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOperationLog.qml

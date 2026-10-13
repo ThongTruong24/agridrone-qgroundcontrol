@@ -39,4 +39,5 @@ private slots:
     void _testCameraWriteAllowedWhileArmed();
     void _testInactiveGroupAckOnly();
     void _testStaleInProgressAfterFailedIgnored();
+    void _testOffAsksWhenArmed();
 };
