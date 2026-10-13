@@ -4,6 +4,7 @@
 #include <QtQml/QQmlEngine>
 #include <QtGui/QWindow>
 #include <QtTest/QSignalSpy>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
 #include <cstring>
 #include <memory>
@@ -106,8 +107,9 @@ void packNetworkForTest(mavlink_message_t* message)
 }
 
 // ---- 2026-10-12 helpers: what the CC would send, injected the way the vehicle's link delivers it ----
-uint8_t extTypeFor(const QVariant& v)
+uint8_t extTypeFor(const QVariant& v, const char* id = "")
 {
+    if (QByteArray(id) == "CC_STREAM_MODE") return MAV_PARAM_EXT_TYPE_UINT8;
     if (v.typeId() == QMetaType::QString) return MAV_PARAM_EXT_TYPE_CUSTOM;
     if (v.typeId() == QMetaType::Double) return MAV_PARAM_EXT_TYPE_REAL32;
     return v.toUInt() > 1 ? MAV_PARAM_EXT_TYPE_UINT32 : MAV_PARAM_EXT_TYPE_UINT8;
@@ -133,7 +135,7 @@ void encodeExt(const QVariant& v, uint8_t type, char raw[128])
 void primeParam(CompanionController& c, uint8_t system, const char* id, const QVariant& v)
 {
     char raw[128];
-    const uint8_t type = extTypeFor(v);
+    const uint8_t type = extTypeFor(v, id);
     encodeExt(v, type, raw);
     mavlink_message_t m{};
     mavlink_msg_param_ext_value_pack(system, 191, &m, id, raw, type, 40, 0);
@@ -143,7 +145,7 @@ void primeParam(CompanionController& c, uint8_t system, const char* id, const QV
 void ackParamSet(CompanionController& c, uint8_t system, const char* id, const QVariant& v, uint8_t result = PARAM_ACK_ACCEPTED)
 {
     char raw[128];
-    const uint8_t type = extTypeFor(v);
+    const uint8_t type = extTypeFor(v, id);
     encodeExt(v, type, raw);
     mavlink_message_t m{};
     mavlink_msg_param_ext_ack_pack(system, 191, &m, id, raw, type, result);
@@ -229,15 +231,29 @@ void sendStreamTelemetry(CompanionController& c, uint8_t system, bool camera, bo
     c.processMessageForTest(m);
 }
 
-// Camera stream state the controller needs before it accepts ON/OFF: telemetry plus the three readbacks.
-void primeCameraStream(CompanionController& c, uint8_t system, bool enabled, uint8_t publishStatus, const char* url)
+// 2026-10-13: what setStreamMode needs: a CC heartbeat, fresh camera telemetry and the confirmed CC_STREAM_MODE.
+void primeStreamMode(CompanionController& c, uint8_t system, uint8_t mode)
 {
     sendCompanionHeartbeat(c, system);
-    sendStreamTelemetry(c, system, true, enabled, publishStatus);
-    primeParam(c, system, "CC_CAM_PUB_URL", QString(url));
-    primeParam(c, system, "CC_CAM_FPV_EN", enabled ? 1u : 0u);
-    primeParam(c, system, "CC_CAM_PUB_EN", publishStatus == 2 ? 1u : 0u);
+    sendStreamTelemetry(c, system, true, mode != 0, mode != 0 ? 2 : 0);
+    primeParam(c, system, "CC_STREAM_MODE", uint(mode));
     primeParam(c, system, "CC_CAM_RES", QString("1280x720"));
+    primeParam(c, system, "CC_CAM_PUB_URL", QString("rtsp://127.0.0.1:8554/camera"));
+}
+
+int lastSetValue(MockLink* link)
+{
+    mavlink_message_t sent{};
+    mavlink_param_ext_set_t p{};
+    if (link->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, sent)) mavlink_msg_param_ext_set_decode(&sent, &p);
+    return static_cast<uint8_t>(p.param_value[0]);
+}
+
+void sendCompanionText(CompanionController& c, uint8_t system, const char* text)
+{
+    mavlink_message_t m{};
+    mavlink_msg_statustext_pack(system, 191, &m, MAV_SEVERITY_INFO, text, 0, 0);
+    c.processMessageForTest(m);
 }
 
 QStringList stepTexts(const QVariantMap& operation)
@@ -465,7 +481,7 @@ void CompanionControllerTest::_testToolbarLegacyAndIndependentStreams()
     const auto state = controller.visionStreamState();
     QVERIFY(qAbs(state["current"].toMap()["fps"].toDouble() - 4.8) < 0.001);
     QCOMPARE(state["configured"].toMap()["fps"].toDouble(), 5.0);
-    QVERIFY(!controller.setStreamEnabled("camera", true, "rtmp://invalid"));
+    QVERIFY(!controller.setStreamParameter("camera", "CC_CAM_PUB_URL", "rtmp://invalid"));
     QVERIFY(!controller.setStreamParameter("vision", "CC_CAM_FPS", 15));
 }
 
@@ -518,12 +534,10 @@ Window {
         return null
     }
     function openCamera() { camera.children[1].clicked(null) }
-    function openVision() { vision.children[1].clicked(null) }
     function openCompanion() { companion.children[1].clicked(null) }
     Row {
         width: parent.width; height: 50
         CameraStatusIndicator { id: camera }
-        VisionStatusIndicator { id: vision }
         CompanionStatusIndicator { id: companion }
     }
 }
@@ -535,13 +549,12 @@ Window {
     QVERIFY(QMetaObject::invokeMethod(window.get(), "openCamera"));
     QCOMPARE(window->property("opened").toString(), QString("Vehicle Video Status"));
     QVERIFY(window->property("urlFocused").toBool());
-    QVERIFY(QMetaObject::invokeMethod(window.get(), "openVision"));
-    QCOMPARE(window->property("opened").toString(), QString("Vehicle Vision Status"));
     QVERIFY(QMetaObject::invokeMethod(window.get(), "openCompanion"));
     QCOMPARE(window->property("opened").toString(), QString("Vehicle Companion Status"));
 }
 
-void CompanionVehicleLifecycleTest::_testStreamOnUrlAckBeforeEnableAndVehicleCancel()
+// 2026-10-13: the stream ON/OFF half of this test went with CC_CAM_FPV_EN/PUB_EN; the readback, link and hotspot halves stay.
+void CompanionVehicleLifecycleTest::_testReadbackLinkHotspotAndVehicleCancel()
 {
     CompanionController controller;
     _connectMockLinkNoInitialConnectSequence();
@@ -579,41 +592,8 @@ Item {
         QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_REQUEST_LIST), readsBefore + 1);
         QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), writesBefore);
     }
-    const auto value = [&](const char *id, const char *url, uint8_t publish, bool ack, uint8_t result, uint8_t component = 191) {
-        char raw[128]{};
-        const bool string = QString(id).endsWith("URL");
-        if (string) std::strncpy(raw, url, sizeof(raw) - 1); else raw[0] = publish;
-        mavlink_message_t packet{};
-        if (ack) mavlink_msg_param_ext_ack_pack(system, component, &packet, id, raw,
-            string ? MAV_PARAM_EXT_TYPE_CUSTOM : MAV_PARAM_EXT_TYPE_UINT8, result);
-        else mavlink_msg_param_ext_value_pack(system, component, &packet, id, raw,
-            string ? MAV_PARAM_EXT_TYPE_CUSTOM : MAV_PARAM_EXT_TYPE_UINT8, 2, 0);
-        controller.processMessageForTest(packet);
-    };
-    value("CC_CAM_PUB_URL", "rtsp://localhost:8554/old", 0, false, 0);
-    value("CC_CAM_PUB_EN", "", 0, false, 0);
-    value("CC_CAM_FPV_EN", "", 1, false, 0);
-    const int count = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/new")); // 2026-10-12: ON takes the address; no Connect button
-    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 1, 3000);
-    value("CC_CAM_PUB_URL", "rtsp://localhost:8554/old", 0, true, PARAM_ACK_IN_PROGRESS);
-    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 1);
-    value("CC_CAM_PUB_URL", "rtsp://localhost:8554/new", 0, true, PARAM_ACK_ACCEPTED, 192);
-    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 1);
-    value("CC_CAM_PUB_URL", "rtsp://localhost:8554/new", 0, true, PARAM_ACK_ACCEPTED);
-    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 2, 3000);
     mavlink_message_t sent{};
-    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, sent));
     mavlink_param_ext_set_t parameter{};
-    mavlink_msg_param_ext_set_decode(&sent, &parameter);
-    QCOMPARE(QString::fromLatin1(parameter.param_id), QString("CC_CAM_PUB_EN"));
-    QCOMPARE(parameter.target_component, uint8_t(191));
-    value("CC_CAM_PUB_EN", "", 1, true, PARAM_ACK_ACCEPTED);
-    QVERIFY(!controller.cameraStreamState()["pending"].toBool());
-    QVERIFY(controller.setStreamEnabled("camera", false)); // OFF stops the stream (the node ends publishing itself)
-    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), count + 3, 3000);
-    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_FPV_EN"));
-    value("CC_CAM_FPV_EN", "", 0, true, PARAM_ACK_ACCEPTED);
     const auto stage = [&](const char *id, const QVariant &input, uint8_t type, bool ack = false, uint8_t result = PARAM_ACK_ACCEPTED) {
         char raw[128]{};
         if (type == MAV_PARAM_EXT_TYPE_CUSTOM) {
@@ -716,15 +696,13 @@ Item {
     stage("CC_L1_PORT", "ttyUSB1", MAV_PARAM_EXT_TYPE_CUSTOM);
     stage("CC_L0_BAUD", 57600, MAV_PARAM_EXT_TYPE_UINT32);
     stage("CC_L1_BAUD", 115200, MAV_PARAM_EXT_TYPE_UINT32);
-    // The final URL operation is cancelled when its vehicle disappears.
-    camera.config_version = 1;
-    mavlink_msg_cc_telemetry_camera_encode(system, 191, &message, &camera);
-    controller.processMessageForTest(message);
+    // A mode operation is cancelled when its vehicle disappears.
+    primeStreamMode(controller, system, 1);
     const int beforeCancel = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/another"));
+    QVERIFY(controller.setStreamMode(2));
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), beforeCancel + 1, 3000);
     _disconnectMockLink();
-    value("CC_CAM_PUB_URL", "rtsp://localhost:8554/another", 0, true, PARAM_ACK_ACCEPTED);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 2u);
     QVERIFY(!controller.cameraStreamState()["pending"].toBool());
 }
 
@@ -871,74 +849,21 @@ void CompanionVehicleLifecycleTest::_testSecretNeverAppearsInOperationSteps()
     for (const auto& t : texts) QVERIFY2(!t.contains("Secret-Canary-123"), qPrintable(t));
 }
 
-// 2026-10-12: ON used to need a separate Connect; now it takes the address from the field and sends URL, enable, publish in order.
-void CompanionVehicleLifecycleTest::_testStreamOnSendsUrlEnablePublishInOrder()
-{
-    CompanionController controller;
-    _connectMockLinkNoInitialConnectSequence();
-    const auto system = vehicle()->id();
-    primeCameraStream(controller, system, false, 0, "rtsp://localhost:8554/old");
-    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/new"));
-    QStringList order;
-    for (const char* id : {"CC_CAM_PUB_URL", "CC_CAM_FPV_EN", "CC_CAM_PUB_EN"}) {
-        QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + order.size() + 1, 3000);
-        order << lastSetId(mockLink());
-        ackParamSet(controller, system, id, QString(id).endsWith("URL") ? QVariant(QString("rtsp://localhost:8554/new")) : QVariant(1u));
-    }
-    QCOMPARE(order, (QStringList{"CC_CAM_PUB_URL", "CC_CAM_FPV_EN", "CC_CAM_PUB_EN"}));
-    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("camera")["outcome"].toString(), QString("confirmed"), 2000);
-}
-
-// 2026-10-12: OFF only stops the stream; the node ends publishing by itself.
-void CompanionVehicleLifecycleTest::_testStreamOffSendsOnlyEnableZero()
-{
-    CompanionController controller;
-    _connectMockLinkNoInitialConnectSequence();
-    const auto system = vehicle()->id();
-    primeCameraStream(controller, system, true, 2, "rtsp://localhost:8554/live");
-    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.setStreamEnabled("camera", false));
-    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
-    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_FPV_EN"));
-    ackParamSet(controller, system, "CC_CAM_FPV_EN", 0u);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("camera")["outcome"].toString(), QString("confirmed"), 2000);
-    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1);
-}
-
-// 2026-10-12: ON decides from telemetry, not from the parameter cache: what already runs is skipped, with the reason shown.
-void CompanionVehicleLifecycleTest::_testStreamOnSkipsWhatTelemetryShowsDone()
-{
-    CompanionController controller;
-    _connectMockLinkNoInitialConnectSequence();
-    const auto system = vehicle()->id();
-    primeCameraStream(controller, system, true, 2, "rtsp://localhost:8554/live");
-    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/live"));
-    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
-    const auto texts = stepTexts(controller.operationState("camera"));
-    QVERIFY(texts.contains(QStringLiteral("Đã ON theo telemetry")));
-    QVERIFY(texts.contains(QStringLiteral("Đang publish theo telemetry")));
-    for (const auto& step : controller.operationState("camera")["steps"].toList()) QCOMPARE(step.toMap()["state"].toString(), QString("skipped"));
-
-    // a stale cache says the stream is off while telemetry says it runs: the enable is still not sent twice
-    primeParam(controller, system, "CC_CAM_FPV_EN", 0u);
-    QVERIFY(controller.setStreamEnabled("camera", true, "rtsp://localhost:8554/live"));
-    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
-}
-
 // 2026-10-12: an address that is not rtsp://host/path is refused before anything is sent, and the popup is told why.
-void CompanionVehicleLifecycleTest::_testStreamOnRefusesInvalidAddress()
+// 2026-10-13: the address is its own field now (no ON switch takes it), so the check moved to setStreamParameter.
+void CompanionVehicleLifecycleTest::_testStreamUrlRefusesInvalidAddress()
 {
     CompanionController controller;
     _connectMockLinkNoInitialConnectSequence();
     const auto system = vehicle()->id();
-    primeCameraStream(controller, system, false, 0, "rtsp://localhost:8554/old");
+    primeStreamMode(controller, system, 1);
     const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    for (const char* bad : {"", "rtmp://host/live", "rtsp://host", "not a url"}) QVERIFY2(!controller.setStreamEnabled("camera", true, bad), bad);
+    for (const char* bad : {"", "rtmp://host/live", "rtsp://host", "not a url"}) QVERIFY2(!controller.setStreamParameter("camera", "CC_CAM_PUB_URL", bad), bad);
     QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
-    QCOMPARE(controller.operationState("camera")["outcome"].toString(), QString("error"));
-    QVERIFY(stepTexts(controller.operationState("camera")).contains(QStringLiteral("Địa chỉ RTSP không hợp lệ")));
+    QCOMPARE(controller.operationState("stream")["outcome"].toString(), QString("error"));
+    QVERIFY(stepTexts(controller.operationState("stream")).contains(QStringLiteral("Địa chỉ RTSP không hợp lệ")));
+    QVERIFY(controller.setStreamParameter("camera", "CC_CAM_PUB_URL", "rtsp://localhost:8554/new"));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_CAM_PUB_URL"), 3000);
 }
 
 // 2026-10-12: popups said only "Controls require current Companion firmware and telemetry".
@@ -1021,8 +946,8 @@ void CompanionVehicleLifecycleTest::_testHotspotApplyAllowedWhenApOff()
     QCOMPARE(lastSetId(mockLink()), QString("CC_AP_SSID"));
 }
 
-// 2026-10-12: Vision confidence and the AI branch had no control once Settings was removed.
-void CompanionVehicleLifecycleTest::_testVisionConfidenceAndAiBranch()
+// 2026-10-12: Vision confidence had no control once Settings was removed. (2026-10-13: the AI branch switch is gone; the mode drives it.)
+void CompanionVehicleLifecycleTest::_testVisionConfidence()
 {
     CompanionController controller;
     _connectMockLinkNoInitialConnectSequence();
@@ -1031,8 +956,6 @@ void CompanionVehicleLifecycleTest::_testVisionConfidenceAndAiBranch()
     sendStreamTelemetry(controller, system, false, true, 0);
     sendStreamTelemetry(controller, system, true, true, 0);
     primeParam(controller, system, "CC_VIS_CONF", 0.35);
-    primeParam(controller, system, "CC_CAM_AI_EN", 0u);
-    QCOMPARE(controller.visionStreamState()["aiBranch"].toBool(), false);
     QVERIFY(qAbs(controller.visionStreamState()["confidence"].toDouble() - 0.35) < 0.001);
 
     int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
@@ -1041,12 +964,172 @@ void CompanionVehicleLifecycleTest::_testVisionConfidenceAndAiBranch()
     QCOMPARE(lastSetId(mockLink()), QString("CC_VIS_CONF"));
     QCOMPARE(lastSetType(mockLink()), uint8_t(MAV_PARAM_EXT_TYPE_REAL32));
     ackParamSet(controller, system, "CC_VIS_CONF", 0.5);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("vision")["outcome"].toString(), QString("confirmed"), 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("confirmed"), 2000);
+}
 
-    base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
-    QVERIFY(controller.setAiBranch(true));
+// 2026-10-13: one mode switch replaces the separate ON/OFF and AI-branch switches; the CC reports "[k/n]" steps and QGC
+// reconnects its player as soon as the CC confirms the mode.
+void CompanionVehicleLifecycleTest::_testStreamModeProgressAndVideoRestart()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 0);
+    QCOMPARE(controller.streamModeState()["mode"].toInt(), 0);
+    QSignalSpy restarts(&controller, &CompanionController::videoRestarted);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamMode(2));
     QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
-    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_AI_EN"));
+    QCOMPARE(lastSetId(mockLink()), QString("CC_STREAM_MODE"));
     QCOMPARE(lastSetType(mockLink()), uint8_t(MAV_PARAM_EXT_TYPE_UINT8));
-    QVERIFY(controller.operationState("vision")["active"].toBool()); // progress shows in the Vision popup
+    QCOMPARE(lastSetValue(mockLink()), 2);
+    auto state = controller.streamModeState();
+    QCOMPARE(state["mode"].toInt(), 0);        // the switch moves only when the CC confirms
+    QCOMPARE(state["pendingMode"].toInt(), 2);
+    QVERIFY(state["modeOperation"].toBool());
+
+    ackParamSet(controller, system, "CC_STREAM_MODE", 0u, PARAM_ACK_IN_PROGRESS);
+    sendCompanionText(controller, system, "Camera: [3/5] MediaMTX released /camera");
+    const auto operation = controller.streamModeState()["operation"].toMap();
+    QVERIFY(qAbs(operation["progress"].toDouble() - 0.6) < 0.001);
+    QVERIFY(stepTexts(operation).contains(QStringLiteral("Camera: [3/5] MediaMTX released /camera")));
+    QCOMPARE(restarts.count(), 0);
+
+    ackParamSet(controller, system, "CC_STREAM_MODE", 2u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.streamModeState()["operation"].toMap()["outcome"].toString(), QString("confirmed"), 2000);
+    state = controller.streamModeState();
+    QCOMPARE(state["mode"].toInt(), 2);
+    QCOMPARE(state["pendingMode"].toInt(), 2);
+    QCOMPARE(restarts.count(), 1);
+    QCOMPARE(restarts.takeFirst().at(0).toInt(), 2);
+
+    QVERIFY(controller.setStreamMode(0)); // Off: the player is stopped, not restarted
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetValue(mockLink()), 0, 3000);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 0u);
+    QTRY_COMPARE_WITH_TIMEOUT(restarts.count(), 1, 2000);
+    QCOMPARE(restarts.takeFirst().at(0).toInt(), 0);
+}
+
+// 2026-10-13: camera/Vision work has no deadline; only 3 s of silence from the CC (300 ms in unit tests) ends the wait,
+// and that is reported as "no answer", not as a failed change.
+void CompanionVehicleLifecycleTest::_testStreamModeSilenceThreeSeconds()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_STREAM_MODE"), 3000);
+    bool stayedActive = true;
+    int beat = 0;
+    QTimer keepAlive;
+    QObject::connect(&keepAlive, &QTimer::timeout, &controller, [&]() {
+        // keepalives and status lines alternate; either one proves the CC is alive
+        if (++beat % 2) ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+        else sendCompanionText(controller, system, "Camera: waiting for first frame");
+        stayedActive = stayedActive && controller.streamModeState()["operation"].toMap()["active"].toBool();
+    });
+    keepAlive.start(100);
+    QElapsedTimer clock;
+    clock.start();
+    QTRY_VERIFY_WITH_TIMEOUT(clock.elapsed() > 2000, 4000); // longer than every old ACK/total budget of the unit tests
+    keepAlive.stop();
+    QVERIFY(stayedActive);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.streamModeState()["operation"].toMap()["outcome"].toString(), QString("unconfirmed"), 2000);
+    const auto operation = controller.streamModeState()["operation"].toMap();
+    QVERIFY(stepTexts(operation).contains(QStringLiteral("CC không phản hồi")));
+    QVERIFY(operation["error"].toString().isEmpty());
+    QCOMPARE(controller.streamModeState()["pendingMode"].toInt(), controller.streamModeState()["mode"].toInt());
+}
+
+// 2026-10-13: Cancel sends the previous mode again; the CC fails the cancelled operation first, which must not end the new one.
+void CompanionVehicleLifecycleTest::_testStreamModeCancel()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    sendCompanionText(controller, system, "Camera: [3/5] waiting: MediaMTX holds /camera");
+
+    controller.cancelStreamOperation();
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 2, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_STREAM_MODE"));
+    QCOMPARE(lastSetValue(mockLink()), 1);
+    QCOMPARE(controller.streamModeState()["mode"].toInt(), 1);
+    QCOMPARE(controller.streamModeState()["pendingMode"].toInt(), 1);
+
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_FAILED); // the cancelled 1 -> 2
+    QVERIFY(controller.streamModeState()["operation"].toMap()["active"].toBool());
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.streamModeState()["operation"].toMap()["outcome"].toString(), QString("confirmed"), 2000);
+    QCOMPARE(controller.streamModeState()["mode"].toInt(), 1);
+    QVERIFY(stepTexts(controller.streamModeState()["operation"].toMap()).contains(QStringLiteral("Camera: [3/5] waiting: MediaMTX holds /camera")));
+}
+
+// 2026-10-13: camera and Vision run apart from flight, so they stay writable while armed; links stay locked.
+void CompanionVehicleLifecycleTest::_testCameraWriteAllowedWhileArmed()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    mockLink()->setArmed(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), 5000);
+    primeStreamMode(controller, system, 1);
+    primeParam(controller, system, "CC_CAM_BR", 2000u);
+    QCOMPARE(controller.streamReason("camera")["code"].toInt(), 0);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamParameter("camera", "CC_CAM_BR", 4000));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_CAM_BR"));
+    ackParamSet(controller, system, "CC_CAM_BR", 4000u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("confirmed"), 2000);
+    QVERIFY(controller.setStreamMode(0));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_STREAM_MODE"), 3000);
+    ackParamSet(controller, system, "CC_STREAM_MODE", 0u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.streamModeState()["mode"].toInt(), 0, 2000);
+
+    primeLinksAndParams(controller, system);
+    QVERIFY(!controller.setLinkConfig(1, "ttyUSB1", 57600));
+}
+
+// 2026-10-13: a parameter of the group that is not streaming is confirmed by the CC's readback, so its ACK is enough;
+// the Vision video parameters belong to the camera now and need no Vision telemetry.
+void CompanionVehicleLifecycleTest::_testInactiveGroupAckOnly()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    primeParam(controller, system, "CC_VIS_BR", 1000u);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(controller.setStreamParameter("vision", "CC_VIS_BR", 1500));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base + 1, 3000);
+    QCOMPARE(lastSetId(mockLink()), QString("CC_VIS_BR"));
+    ackParamSet(controller, system, "CC_VIS_BR", 1500u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("confirmed"), 2000);
+}
+
+// 2026-10-13: the CC may send one more keepalive just after the FAILED of the same parameter; it must not revive anything.
+void CompanionVehicleLifecycleTest::_testStaleInProgressAfterFailedIgnored()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    QVERIFY(controller.setStreamMode(2));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_STREAM_MODE"), 3000);
+    sendCompanionText(controller, system, "Camera: encoder failed to start");
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_FAILED);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("error"), 2000);
+    const auto steps = controller.operationState("stream")["steps"].toList().size();
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    QCOMPARE(controller.operationState("stream")["outcome"].toString(), QString("error"));
+    QCOMPARE(controller.operationState("stream")["steps"].toList().size(), steps);
+    QVERIFY(!controller.streamModeState()["modeOperation"].toBool());
+    QCOMPARE(controller.streamModeState()["mode"].toInt(), 1);
 }

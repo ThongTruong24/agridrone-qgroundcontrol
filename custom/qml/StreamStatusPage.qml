@@ -78,31 +78,6 @@ ToolIndicatorPage {
                 visible: !page.hideControls
                 Layout.fillWidth: true
                 spacing: ScreenTools.defaultFontPixelHeight / 2
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: ScreenTools.defaultFontPixelWidth
-
-                    QGCLabel {
-                        text: page.camera ? qsTr("Video Stream") : qsTr("Vision Stream")
-                        Layout.fillWidth: true
-                    }
-
-                    QGCLabel {
-                        text: page.streamState.enabled ? qsTr("ON") : qsTr("OFF")
-                        font.bold: true
-                        color: page.streamState.enabled ? "#34C759" : qgcPal.text
-                    }
-
-                    CompanionToggleSwitch {
-                        id: streamSwitch
-                        checked: !!page.streamState.enabled
-                        enabled: page.editable
-                        onToggled: (val) => {
-                            page.localError = ""
-                            CompanionController.setStreamEnabled(page.stream, val, page.draftUrl)
-                        }
-                    }
-                }
                 QGCLabel { text: qsTr("Resolution") }
                 QGCComboBox {
                     Layout.fillWidth: true
@@ -147,17 +122,6 @@ ToolIndicatorPage {
                     currentIndex: model.indexOf(running)
                     enabled: page.editable && running !== ""
                     onActivated: page.send("CC_VIS_CONF", Number(currentText))
-                }
-                RowLayout {
-                    visible: !page.camera
-                    Layout.fillWidth: true
-                    spacing: ScreenTools.defaultFontPixelWidth
-                    QGCLabel { text: qsTr("AI branch (camera → Vision)"); Layout.fillWidth: true }
-                    CompanionToggleSwitch {
-                        checked: !!page.streamState.aiBranch
-                        enabled: page.editable
-                        onToggled: (val) => CompanionController.setAiBranch(val)
-                    }
                 }
                 QGCLabel { text: qsTr("RTSP publish destination") }
                 QGCTextField {

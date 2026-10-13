@@ -21,19 +21,22 @@ class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
 
 private slots:
     void _testDisconnectAndReconnectReset();
-    void _testStreamOnUrlAckBeforeEnableAndVehicleCancel();
+    void _testReadbackLinkHotspotAndVehicleCancel();
     void _testStreamOptionsFromCapabilityParams();
     void _testApplyProgressFromCompanionStages();
     void _testLinkApplyGapConfirmedByTelemetry();
     void _testHotspotApplyGapConfirmedByTelemetry();
     void _testSetWithoutAnyAckReportsNoResponse();
     void _testSecretNeverAppearsInOperationSteps();
-    void _testStreamOnSendsUrlEnablePublishInOrder();
-    void _testStreamOffSendsOnlyEnableZero();
-    void _testStreamOnSkipsWhatTelemetryShowsDone();
-    void _testStreamOnRefusesInvalidAddress();
+    void _testStreamUrlRefusesInvalidAddress();
     void _testStreamReasonTable();
     void _testLinkPortAndBaudApplyAndConflictGuard();
     void _testHotspotApplyAllowedWhenApOff();
-    void _testVisionConfidenceAndAiBranch();
+    void _testVisionConfidence();
+    void _testStreamModeProgressAndVideoRestart();
+    void _testStreamModeSilenceThreeSeconds();
+    void _testStreamModeCancel();
+    void _testCameraWriteAllowedWhileArmed();
+    void _testInactiveGroupAckOnly();
+    void _testStaleInProgressAfterFailedIgnored();
 };

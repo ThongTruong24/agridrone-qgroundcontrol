@@ -17,7 +17,7 @@ const QVariantList& CustomPlugin::toolBarIndicators()
 {
     static const QVariantList indicators = [this]() {
         auto result = QGCCorePlugin::toolBarIndicators();
-        for (const auto &name : {"CameraStatusIndicator", "VisionStatusIndicator", "CompanionStatusIndicator"})
+        for (const auto &name : {"CameraStatusIndicator", "CompanionStatusIndicator"})
             result.append(QUrl(QString("qrc:/qml/Custom/AgriDrone/%1.qml").arg(name)));
         return result;
     }();

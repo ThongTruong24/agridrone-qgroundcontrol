@@ -27,6 +27,7 @@ class CompanionController : public QObject
     Q_OBJECT
     Q_PROPERTY(QVariantMap cameraStreamState READ cameraStreamState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap visionStreamState READ visionStreamState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap streamModeState READ streamModeState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap hotspotState READ hotspotState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantList serialLinks READ serialLinks NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap companionState READ companionState NOTIFY toolbarStateChanged)
@@ -302,19 +303,21 @@ public:
     QVariantMap hotspotState() const;
     QVariantMap companionState() const;
     QVariantList serialLinks() const { return _linksService->serialLinks(); }
+    /// The single stream mode, CC_STREAM_MODE: 0 Off, 1 Video, 2 Vision. A new mode while a mode operation is pending
+    /// replaces it (the CC cancels the old one). Camera/Vision writes are allowed while armed.
+    Q_INVOKABLE bool setStreamMode(int mode);
+    /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way.
+    Q_INVOKABLE void cancelStreamOperation();
+    /// {mode (confirmed, -1 unknown), pendingMode, modeOperation, pending, operation, reason, visionFresh}
+    QVariantMap streamModeState() const;
     Q_INVOKABLE bool setStreamParameter(const QString& stream, const QString& id, const QVariant& value);
-    /// ON publishes to `url` (sent first when it differs from the configured one); OFF only stops the stream. Changing the
-    /// address while ON means: edit it, switch OFF, switch ON.
-    Q_INVOKABLE bool setStreamEnabled(const QString& stream, bool enabled, const QString& url = QString());
     /// Why the popup of this stream cannot be used: {code, text}; code 0 = usable (see the table in the Fly View spec).
     QVariantMap streamReason(const QString& stream) const;
     /// Port device and baud of a UART (index 0 or 1) in one operation; a device already used by the other link is refused.
     Q_INVOKABLE bool setLinkConfig(int index, const QString& port, int baud);
-    /// Camera -> Vision AI branch on/off (CC_CAM_AI_EN); its progress is shown in the Vision popup.
-    Q_INVOKABLE bool setAiBranch(bool enabled);
     Q_INVOKABLE bool applyHotspot(const QVariantMap& draft);
     /// Steps and progress of the operation a popup started: {active, progress 0..1, steps[{direction, text, state, elapsedMs}], error, outcome}.
-    /// It stays available after the operation ends, until the next one starts. origin: "camera", "vision" or "companion".
+    /// It stays available after the operation ends, until the next one starts. origin: "stream" (camera and Vision) or "companion".
     Q_INVOKABLE QVariantMap operationState(const QString& origin) const;
 
     // Called by the MAV command queue for the APPLY_CONFIG this controller sent (see advanceToolbarOperation).
@@ -360,6 +363,7 @@ signals:
     void vehicleAvailableChanged();
     void systemChanged();
     void toastChanged();
+    void videoRestarted(int mode); ///< after a confirmed mode change QGC's player was stopped (and started unless Off)
 
 private slots:
     void _setActiveVehicle(Vehicle* vehicle);
@@ -382,6 +386,8 @@ private:
     void advanceToolbarOperation();
     void checkToolbarEffect();
     void toolbarTimedOut();
+    void endUnconfirmed(const QString& note);
+    bool modeOperationPending() const;
     void finishToolbarOperation(const QString& error = QString());
     void toolbarParameterSaved(const QString& name, bool success);
     QElapsedTimer _toolbarClock;
@@ -408,6 +414,7 @@ private:
         double progress{0.0};
         qint64 startedMs{0};
         bool sawInProgress{false};       // the awaited SET got ACK IN_PROGRESS
+        bool expectCancelAck{false};     // a replaced mode operation: the CC answers it before the new one's first IN_PROGRESS
         bool applySent{false};
         bool resultSeen{false};
         bool gapTolerant{false};         // the CC reported a stage after which it drops the link (router/AP restart)

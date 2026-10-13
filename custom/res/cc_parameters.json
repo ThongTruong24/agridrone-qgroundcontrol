@@ -190,31 +190,17 @@
             "applyMode": "live"
         },
         {
-            "name": "CC_CAM_FPV_EN",
+            "name": "CC_STREAM_MODE",
             "group": "Camera",
-            "label": "FPV Output Enable",
+            "label": "Stream Mode",
             "type": "uint8",
             "default": 1,
             "options": [
                 "0",
-                "1"
+                "1",
+                "2"
             ],
-            "description": "Enable the FPV output branch",
-            "reboot": false,
-            "readOnly": false,
-            "applyMode": "live"
-        },
-        {
-            "name": "CC_CAM_AI_EN",
-            "group": "Camera",
-            "label": "Camera AI Enable",
-            "type": "uint8",
-            "default": 1,
-            "options": [
-                "0",
-                "1"
-            ],
-            "description": "Enable the camera AI frame branch",
+            "description": "Stream mode, 0 Off, 1 Video, 2 Vision (video with detection boxes)",
             "reboot": false,
             "readOnly": false,
             "applyMode": "live"
@@ -387,22 +373,11 @@
             "group": "Vision",
             "label": "Vision Output Stream URL",
             "type": "string",
-            "default": "rtsp://127.0.0.1:8554/yolo",
+            "default": "rtsp://127.0.0.1:8554/camera",
             "description": "Vision output stream URL",
             "reboot": true,
             "readOnly": false,
             "applyMode": "live"
-        },
-        {
-            "name": "CC_CAM_PUB_EN",
-            "group": "Camera",
-            "label": "Publish Enabled",
-            "type": "uint8",
-            "description": "publish enabled",
-            "reboot": false,
-            "readOnly": false,
-            "applyMode": "live",
-            "default": 1
         },
         {
             "name": "CC_CAM_PUB_URL",
@@ -425,28 +400,6 @@
             "readOnly": false,
             "applyMode": "live",
             "default": "1280x720"
-        },
-        {
-            "name": "CC_VIS_EN",
-            "group": "Vision",
-            "label": "Enabled",
-            "type": "uint8",
-            "description": "enabled",
-            "reboot": false,
-            "readOnly": false,
-            "applyMode": "live",
-            "default": 1
-        },
-        {
-            "name": "CC_VIS_PUB_EN",
-            "group": "Vision",
-            "label": "Publish Enabled",
-            "type": "uint8",
-            "description": "publish enabled",
-            "reboot": false,
-            "readOnly": false,
-            "applyMode": "live",
-            "default": 1
         },
         {
             "name": "CC_VIS_RES",
