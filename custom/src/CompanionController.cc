@@ -262,8 +262,11 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
         _ccLink.reset();
         _paramService->setTransport({}); // before the clear: its failed-op re-read must not reach the old CC
         ++_ccSessionEpoch;
-        _unsaved.clear(); // the next CC locked may not be the one that confirmed the APPLY
-        if (otherSystem) finishToolbarOperation(tr("Mất kết nối Companion")); // that CC cannot come back while this Vehicle is active
+        if (otherSystem) {
+            _unsaved.clear(); // the next CC locked is this Vehicle's, not the one that applied it
+            _saveBlocked.clear();
+            finishToolbarOperation(tr("Mất kết nối Companion")); // that CC cannot come back while this Vehicle is active
+        }
         _clearTelemetryState();
     }
 
@@ -322,7 +325,8 @@ void CompanionController::onCompanionSessionStarted()
 {
     if (!_toolbarOperation || !_toolbarOperation->waitingReconnect) return;
     auto& op = *_toolbarOperation;
-    if (_sourceSystemId != op.systemId) { finishToolbarOperation(tr("Mất kết nối Companion")); return; } // not the CC that applied it
+    // Not the CC that got the APPLY: that one may well have applied it, so nothing is known.
+    if (_sourceSystemId != op.systemId) { endUnconfirmed(tr("CC khác đã kết nối lại")); return; }
     op.epoch = _ccSessionEpoch;
     op.readbackRequested = true;
     // Only values read in this session count, not what the SET ACKs left before the loss.
@@ -341,6 +345,8 @@ void CompanionController::checkReadbackAfterReconnect()
         if (!value.isValid()) return; // not read back yet
         if (value.toString() != it.value().toString()) { finishToolbarOperation(tr("Không áp dụng được")); return; }
     }
+    // Without the CC's IN_PROGRESS or ACCEPTED (waitingEffect) nothing proves it got the APPLY: the values may be its stage alone.
+    if (op.lastApplyProgress < 0 && !op.waitingEffect) { endUnconfirmed(tr("Chưa xác nhận")); return; }
     finishToolbarOperation();
 }
 
@@ -359,7 +365,8 @@ bool CompanionController::saveCompanionGroup(const QString& group)
 {
     const int subsystem = group == QLatin1String("links") ? 1 : group == QLatin1String("hotspot") ? 3 : 0;
     // Only what the group's last APPLY confirmed: SAVE persists whatever the CC runs now (spec §7).
-    if (!subsystem || !_unsaved.value(group) || _toolbarOperation || !companionState().value("connected").toBool() || configLocked()) return false;
+    if (!subsystem || !_unsaved.value(group) || _saveBlocked.value(group) || _toolbarOperation ||
+        !companionState().value("connected").toBool() || configLocked()) return false;
     ToolbarOperation op;
     op.group = group; op.subsystem = subsystem; op.origin = QStringLiteral("companion");
     op.epoch = _ccSessionEpoch; op.systemId = _sourceSystemId; op.startedMs = _toolbarClock.elapsed();
@@ -431,6 +438,8 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
     if (_sourceComponentId < 0) {
         // While a Vehicle is active only its own CC may lock; without one the first CC heard does (ADR-0001).
         if (_activeVehicle && message.sysid != _activeVehicle->id()) return;
+        if (message.sysid != _lastCompanionSystemId) { _unsaved.clear(); _saveBlocked.clear(); } // what is unsaved is that CC's
+        _lastCompanionSystemId = message.sysid;
         _sourceSystemId    = message.sysid;
         _sourceComponentId = message.compid;
     } else if (message.sysid != _sourceSystemId || message.compid != _sourceComponentId) {
@@ -830,7 +839,7 @@ QVariantMap CompanionController::hotspotState() const
         {"ipCidr", fresh ? _apIp + "/" + QString::number(_apPrefixLength) : QString()},
         {"dhcpEnabled", fresh && _apDhcpEnabled}, {"pending", _toolbarOperation && _toolbarOperation->group == "hotspot"},
         {"error", _toolbarErrors.value("hotspot")}, {"operation", operationState("companion")},
-        {"locked", configLocked()}, {"lockReason", lockReason(configLocked())}, {"unsaved", _unsaved.value("hotspot")}};
+        {"locked", configLocked()}, {"lockReason", lockReason(configLocked())}, {"unsaved", _unsaved.value("hotspot") && !_saveBlocked.value("hotspot")}};
 }
 
 namespace {
@@ -857,36 +866,30 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
     if (_paramService->isLoading() || _toolbarOperation || !companionState().value("connected").toBool() ||
         _sourceComponentId != kCompanionCompId || (_activeVehicle && _activeVehicle->id() != _sourceSystemId) ||
         (!streamGroup(group) && configLocked())) return false;
-    if (subsystem == 1) {
-        for (const auto& item : serialLinks()) {
-            const auto link = item.toMap();
-            const auto prefix = QString("CC_L%1_").arg(link.value("index").toInt());
-            if (!_paramService->allFactNames().contains(prefix + "PORT")) continue; // the CC has no parameters for this link
-            for (const auto &field : {QPair<QString, QString>{"BAUD", "baudrate"}, {"PORT", "port"}}) {
-                const auto configured = _paramService->confirmedValue(prefix + field.first);
-                if (!link.value("fresh").toBool() || !configured.isValid() || configured.toString() != link.value(field.second).toString()) {
-                    _toolbarErrors[group] = "Links contain existing stage or stale readback; reconcile in Companion settings";
-                    emit toolbarStateChanged(); return false;
-                }
-            }
-        }
-    }
-    if (subsystem == 3) {
-        const auto active = hotspotState();
-        // With the AP off nothing is broadcast, so the stage cannot be compared; recovering from there is the point.
-        if (active.value("open").toBool()) for (const auto &field : {QPair<QString, QString>{"CC_AP_SSID", "ssid"}, {"CC_AP_IP", "ipCidr"}, {"CC_AP_DHCP", "dhcpEnabled"}}) {
-            const auto configured = _paramService->confirmedValue(field.first);
-            const bool equal = field.first == "CC_AP_DHCP" ? configured.toBool() == active.value(field.second).toBool()
-                : configured.toString() == active.value(field.second).toString();
-            if (!configured.isValid() || !equal) {
-                _toolbarErrors[group] = "Hotspot contains existing stage; reconcile in Companion settings";
-                emit toolbarStateChanged(); return false;
-            }
-        }
-    }
     ToolbarOperation op;
     op.group = group; op.subsystem = subsystem; op.epoch = _ccSessionEpoch; op.systemId = _sourceSystemId;
     for (const auto &entry : values) op.effectCandidate[entry.first] = entry.second;
+    if (subsystem == 1) {
+        // APPLY applies every link value the CC has staged, so another link's stage that differs from its telemetry (a lost
+        // APPLY, a half-sent stage) goes along and must be confirmed too. There is no reconcile step (spec §3).
+        for (const auto& item : serialLinks()) {
+            const auto link = item.toMap();
+            const auto prefix = QString("CC_L%1_").arg(link.value("index").toInt());
+            // the CC has no parameters for this link, or this operation sets them
+            if (!_paramService->allFactNames().contains(prefix + "PORT") || op.effectCandidate.contains(prefix + "PORT")) continue;
+            bool pending = false;
+            for (const auto &field : {QPair<QString, QString>{"BAUD", "baudrate"}, {"PORT", "port"}}) {
+                const auto configured = _paramService->confirmedValue(prefix + field.first);
+                if (!configured.isValid()) { _paramService->requestParameters(); return false; }
+                // shortcut: a link without fresh telemetry cannot be compared and is left out; upgrade if the CC stops reporting one
+                if (link.value("fresh").toBool() && configured.toString() != link.value(field.second).toString()) {
+                    op.effectCandidate[prefix + field.first] = configured;
+                    pending = true;
+                }
+            }
+            if (pending) op.steps.append({"info", tr("Kèm theo: %1 đang chờ áp dụng").arg(link.value("name").toString()), "done", 0});
+        }
+    }
     QMap<QString, QVariant> anticipated;
     for (const auto& entry : values) {
         auto confirmed = anticipated.contains(entry.first) ? anticipated.value(entry.first) : _paramService->confirmedValue(entry.first);
@@ -961,7 +964,7 @@ void CompanionController::toolbarParameterSaved(const QString& name, bool succes
         settleWaitingSteps("error");
         addOperationStep("rx", success ? QStringLiteral("ACK khác giá trị đã gửi") : QStringLiteral("ACK FAILED"), "error");
         // The CC names the reason in a "<Group>: " line right before its FAILED.
-        const QString reason = !op.lastText.isEmpty() ? op.lastText : tr("CC từ chối (không có lý do)");
+        const QString reason = !op.lastText.isEmpty() ? op.lastText : success ? tr("ACK khác giá trị đã gửi") : tr("CC từ chối (không có lý do)");
         // Cancel only this session's successful stage writes, in ACK order (nothing is applied yet).
         if (op.subsystem && !op.waitingCommand && !op.rollingBack && !configLocked()) {
             QList<QPair<QString, QVariant>> rollback;
@@ -1004,7 +1007,7 @@ void CompanionController::finishToolbarOperation(const QString& error)
     settleWaitingSteps(error.isEmpty() ? "done" : "error");
     // Links/hotspot are not autosaved any more (camera/Vision are): SAVE only after a confirmed APPLY (spec §7).
     const bool applied = op.command == MAV_CMD_THACO_APPLY_CONFIG;
-    if (applied) _unsaved[group] = error.isEmpty();
+    recordApplyOutcome(error.isEmpty());
     if (error.isEmpty()) {
         addOperationStep("info", applied ? tr("Đã áp dụng, chưa lưu — reboot sẽ về cấu hình cũ") : tr("Đã lưu"), "done");
         op.progress = 1.0;
@@ -1063,7 +1066,6 @@ void CompanionController::onApplyProgress(uint8_t progress)
     op.progress = qMax(op.progress, 0.5 + progress / 200.0);
     settleWaitingSteps("done");
     addOperationStep("rx", stageText(op.subsystem, progress), "done");
-    if ((op.subsystem == 1 && progress >= 50) || (op.subsystem == 3 && progress >= 35)) op.gapTolerant = true;
 }
 
 void CompanionController::onApplyResult(uint8_t result, bool noResponse)
@@ -1071,8 +1073,9 @@ void CompanionController::onApplyResult(uint8_t result, bool noResponse)
     if (!_toolbarOperation || !_toolbarOperation->applySent || _toolbarOperation->resultSeen) return;
     auto& op = *_toolbarOperation;
     if (noResponse) {
-        // The ACK travels through the router/AP the CC is restarting: the change may well have worked.
-        if (op.gapTolerant) { enterTelemetryWait(); return; }
+        // The CC's first reply to an APPLY is IN_PROGRESS, so with one it has the command and its silence is the router/AP
+        // restart dropping the link (spec §5): the change may well have worked. Without one the APPLY may never have arrived.
+        if (op.command == MAV_CMD_THACO_APPLY_CONFIG && op.lastApplyProgress >= 0) { enterTelemetryWait(); return; }
         op.resultSeen = true;
         finishToolbarOperation(tr("Companion không phản hồi"));
         return;
@@ -1084,6 +1087,7 @@ void CompanionController::onApplyResult(uint8_t result, bool noResponse)
         if (reason.isEmpty()) {
             reason = (result == MAV_RESULT_DENIED && op.group == "hotspot") ? tr("Mật khẩu hiện tại không đúng")
                    : result == MAV_RESULT_TEMPORARILY_REJECTED ? tr("Companion từ chối tạm thời (đang arm, bận hoặc router chưa sẵn sàng)")
+                   : op.command == MAV_CMD_THACO_SAVE_DEFAULT_CONFIG ? tr("Lưu bị từ chối (%1)").arg(result)
                    : tr("Apply bị từ chối (%1)").arg(result);
         }
         finishToolbarOperation(reason);
@@ -1256,14 +1260,7 @@ bool CompanionController::applyHotspot(const QVariantMap& draft)
 
 void CompanionController::checkToolbarEffect()
 {
-    if (!_toolbarOperation) return;
-    // The CC stopped answering after a stage that drops the link: the result can only come from telemetry now.
-    if (_toolbarOperation->applySent && !_toolbarOperation->resultSeen && _toolbarOperation->gapTolerant &&
-        !companionState().value("connected").toBool()) {
-        enterTelemetryWait();
-        return;
-    }
-    if (!_toolbarOperation->waitingEffect) return;
+    if (!_toolbarOperation || !_toolbarOperation->waitingEffect) return;
     const auto &op = *_toolbarOperation;
     if (op.subsystem == 1) {
         for (auto it = op.effectCandidate.cbegin(); it != op.effectCandidate.cend(); ++it) {
@@ -1309,7 +1306,7 @@ void CompanionController::endUnconfirmed(const QString& note)
 {
     if (!_toolbarOperation) return;
     const auto group = _toolbarOperation->group;
-    if (_toolbarOperation->command == MAV_CMD_THACO_APPLY_CONFIG) _unsaved[group] = false;
+    recordApplyOutcome(false);
     _setAckTimer->stop();
     _toolbarOperationTimer->stop();
     if (!note.isEmpty()) {
@@ -1320,6 +1317,17 @@ void CompanionController::endUnconfirmed(const QString& note)
     _toolbarOperation.reset();
     _toolbarErrors[group].clear();
     emit toolbarStateChanged();
+}
+
+void CompanionController::recordApplyOutcome(bool confirmed)
+{
+    const auto& op = *_toolbarOperation;
+    // Only for the CC the APPLY went to: another CC locked since has its own state (cleared when it locked).
+    if (op.command != MAV_CMD_THACO_APPLY_CONFIG || op.systemId != _sourceSystemId) return;
+    if (confirmed) { _unsaved[op.group] = true; _saveBlocked.remove(op.group); }
+    // No hotspot rollback: a failed or unconfirmed candidate may be what the CC runs now, and SAVE would persist it.
+    // A failed links APPLY leaves the active links as they were, so what was applied before can still be saved.
+    else if (op.group == QLatin1String("hotspot")) _saveBlocked[op.group] = true;
 }
 
 void CompanionController::failOperationByTimeout(const QString& reason)

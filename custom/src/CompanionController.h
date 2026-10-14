@@ -404,6 +404,7 @@ private:
     void checkToolbarEffect();
     void toolbarTimedOut();
     void endUnconfirmed(const QString& note);
+    void recordApplyOutcome(bool confirmed);
     bool modeOperationPending() const;
     QString modeBlockedReason() const;
     bool refuseStream(const QString& why);
@@ -439,9 +440,8 @@ private:
         bool expectCancelAck{false};     // a replaced mode operation: the CC answers it before the new one's first IN_PROGRESS
         bool applySent{false};
         bool resultSeen{false};
-        bool gapTolerant{false};         // the CC reported a stage after which it drops the link (router/AP restart)
         bool unconfirmedOnTimeout{false};
-        int lastApplyProgress{-1};
+        int lastApplyProgress{-1};       // >= 0: the CC's first reply to the APPLY came, so it has the command
         QString lastText;                // last STATUSTEXT of the operation's group
         QMap<QString, QVariant> effectCandidate;
         int epoch{0};
@@ -455,7 +455,9 @@ private:
     QTimer* _setAckTimer{nullptr};
     QMap<QString, QVariantMap> _lastOperation;
     QMap<QString, QString> _toolbarErrors;
-    QMap<QString, bool> _unsaved;    // links/hotspot: the last APPLY was confirmed and not saved yet
+    QMap<QString, bool> _unsaved;    // links/hotspot: an APPLY was confirmed and not saved yet
+    QMap<QString, bool> _saveBlocked; // hotspot: a later APPLY failed or was not confirmed, its candidate may be active
+    int _lastCompanionSystemId{-1};  // the CC locked last; _unsaved/_saveBlocked describe it and survive a lock reset
     uint8_t _systemStatus{0};        // CC_TELEMETRY_SYSTEM.system_status (CC_SYS_STATUS bits)
 
     // SOLID Services

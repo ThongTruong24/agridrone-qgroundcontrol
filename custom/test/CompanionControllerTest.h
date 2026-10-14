@@ -30,6 +30,14 @@ private slots:
     void _testStageRollbackWithoutVehicle();
     void _testTelemetryTimeoutKeepsApplyWait();
     void _testReadbackSkipsSecret();
+    void _testLinkApplyWaitsThroughHeartbeatLossThenReadsBack();
+    void _testApplySilenceAfterInProgressWaitsForTelemetry();
+    void _testAcceptedApplyReadbackConfirms();
+    void _testApplyWithoutReceiptReadbackIsUnconfirmed();
+    void _testFailedLinkApplyKeepsEarlierUnsaved();
+    void _testFailedHotspotApplyBlocksSave();
+    void _testPendingStageOfAnotherLinkRidesAlong();
+    void _testStreamPopupWithoutVehicle();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -50,7 +58,7 @@ private slots:
     void _testStreamFailureShowsOwnerReason();
     void _testStreamReasonTable();
     void _testLinkPortAndBaudApplyAndConflictGuard();
-    void _testHotspotApplyAllowedWhenApOff();
+    void _testHotspotApplyAllowedWhenStageDiffers();
     void _testVisionConfidence();
     void _testStreamModeProgressAndVideoRestart();
     void _testStreamModeSilenceThreeSeconds();
@@ -70,4 +78,5 @@ private slots:
     void _testReplaceNotSentKeepsOldOp();
     void _testApplyWaitAcrossVehicleLoss();
     void _testUnsavedClearedWhenCompanionLockResets();
+    void _testUnsavedKeptWhenSameCompanionReturns();
 };

@@ -286,6 +286,34 @@ void CompanionParamServiceTest::_testUnknownParamsNotWritable()
     QCOMPARE(service.modifiedCount(), 0);
 }
 
+// 2026-10-14: cc_parameters.json describes links 0/1 only; a CC_L2_* the CC reported became read-only and its SET was skipped.
+void CompanionParamServiceTest::_testLinkNParamsCloneLinkZeroTemplate()
+{
+    CompanionParamService service;
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L2_BAUD", 57600, 3, 0)));
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L2_NOPE", 1, 3, 1)));  // no CC_L0_NOPE template
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "XCC_L2_BAUD", 1, 3, 2))); // not a link parameter
+    QVariantMap link0, link2, noTemplate, notLink;
+    for (const auto& item : service.paramList()) {
+        const auto map = item.toMap();
+        const auto name = map.value("name").toString();
+        if (name == "CC_L0_BAUD") link0 = map;
+        else if (name == "CC_L2_BAUD") link2 = map;
+        else if (name == "CC_L2_NOPE") noTemplate = map;
+        else if (name == "XCC_L2_BAUD") notLink = map;
+    }
+    QVERIFY(!link2.isEmpty());
+    QVERIFY(!link2.value("readOnly").toBool());
+    QCOMPARE(link2.value("group"), link0.value("group"));
+    QCOMPARE(link2.value("options"), link0.value("options"));
+    QCOMPARE(link2.value("label").toString(), QString("CC_L2_BAUD")); // its own name, not "Link 0 Baudrate"
+    QCOMPARE(link2.value("defaultValue").toUInt(), 57600u);            // the value the CC reported, not link 0's default
+    QVERIFY(noTemplate.value("readOnly").toBool());
+    QVERIFY(notLink.value("readOnly").toBool());
+    service.stageParameter("CC_L2_BAUD", 115200);
+    QCOMPARE(service.modifiedCount(), 1);
+}
+
 void CompanionParamServiceTest::_testConfirmedFacts()
 {
     CompanionParamService service;

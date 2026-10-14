@@ -19,6 +19,7 @@ private slots:
     void _testNamedLinksReplaceLegacyLinks();
     void _testReadOnlyAndBootOnlyCannotBeStaged();
     void _testUnknownParamsNotWritable();
+    void _testLinkNParamsCloneLinkZeroTemplate();
     void _testFactsAreDeveloperCategoryAndEditsAreStaged();
     void _testEditorFactOrderAndStagedSubsystems();
     void _testRequestGoesToTransportWithoutVehicle();

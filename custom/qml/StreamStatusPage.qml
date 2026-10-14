@@ -22,10 +22,10 @@ ToolIndicatorPage {
     property bool readbackRequested: false
     property string localError: ""
     readonly property string title: qsTr("Vehicle Stream Status")
-    readonly property bool linkUp: !!activeVehicle && !activeVehicle.vehicleLinkManager.communicationLost
-    // Reasons 1-7: nothing to configure yet (no vehicle, link, node or readback); 9: another operation is running.
+    // Reasons 2-7: nothing to configure yet (no CC heartbeat, node or readback); 9: another operation is running.
+    // Camera and Vision need only the CC heartbeat (reason 0 implies it), not a Vehicle (spec §5).
     readonly property bool hideControls: reason.code >= 2 && reason.code <= 7
-    readonly property bool editable: reason.code === 0 && linkUp && !modeState.pending
+    readonly property bool editable: reason.code === 0 && !modeState.pending
     readonly property bool visionEditable: editable && visionReason.code === 0
     showExpand: true
     function display(value) { return value === undefined || value === null || value === "" ? qsTr("N/A") : String(value) }
@@ -46,13 +46,12 @@ ToolIndicatorPage {
     }
     function ensureReadback() {
         if (!cam.available) { readbackRequested = false; return }
-        if (!readbackRequested && activeVehicle && !cam.pending) {
+        if (!readbackRequested && !cam.pending) {
             readbackRequested = true
             CompanionController.requestCcParameters()
         }
     }
     Component.onCompleted: ensureReadback()
-    onActiveVehicleChanged: { readbackRequested = false; ensureReadback() }
     onCamChanged: ensureReadback()
 
     // One parameter chosen from the CC's option list.
@@ -159,7 +158,7 @@ ToolIndicatorPage {
                         objectName: "streamModeSwitch"
                         mode: page.mode
                         busy: page.modeState.pendingMode !== page.mode
-                        enabled: !page.modeState.blocked && page.linkUp
+                        enabled: !page.modeState.blocked
                     }
                     CompanionOperationLog { operation: page.modeState.operation || ({}) }
                     // Only a mode change can be cancelled: a stuck rebuild of the running settings is not undone by resending the mode.
