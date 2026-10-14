@@ -125,7 +125,7 @@ QGC_APK="$QGC_OUTPUT_DIR/THACOGroundControl-$QGC_VERSION-$QGC_COMMIT-android-arm
 QGC_ALIGNED_APK="$QGC_OUTPUT_DIR/aligned-unsigned.apk"
 "$QGC_BUILD_TOOLS/zipalign" -P 16 -f 4 "${QGC_UNSIGNED_APKS[0]}" "$QGC_ALIGNED_APK"
 "$QGC_BUILD_TOOLS/apksigner" sign --ks "$QGC_KEYSTORE" --ks-key-alias "$QGC_KEY_ALIAS" \
-    --ks-pass "file:$QGC_PASS_FILE" --key-pass "file:$QGC_PASS_FILE" \
+    --ks-pass "file:$QGC_PASS_FILE" \
     --v4-signing-enabled false --out "$QGC_APK" "$QGC_ALIGNED_APK"
 rm "$QGC_ALIGNED_APK"
 "$QGC_BUILD_TOOLS/apksigner" verify --verbose --print-certs "$QGC_APK" > "$QGC_APK.signature.txt"
