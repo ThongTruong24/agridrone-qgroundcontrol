@@ -7,6 +7,7 @@
 
 #include "CompanionParamService.h"
 #include "Fact.h"
+#include "MAVLinkProtocol.h"
 #include "QGCMAVLink.h"
 
 UT_REGISTER_TEST(CompanionParamServiceTest, TestLabel::Unit)
@@ -335,4 +336,24 @@ void CompanionParamServiceTest::_testEditorFactOrderAndStagedSubsystems()
     QCOMPARE(service.stagedSubsystem("CC_AP_SSID"), 3);
     QCOMPARE(service.stagedSubsystem("CC_CAM_FPS"), 0);
     QCOMPARE(service.stagedSubsystem("CC_NOT_A_PARAM"), 0);
+}
+
+// 2026-10-14: with the FC silent there is no Vehicle; the parameter read must still reach the CC (THACO_Drone-qx3).
+void CompanionParamServiceTest::_testRequestGoesToTransportWithoutVehicle()
+{
+    CompanionParamService service;
+    QList<mavlink_message_t> sent;
+    service.requestParameters(); // no transport yet: nothing to send to
+    QVERIFY(!service.isLoading());
+
+    service.setTransport({7, 0, [&](const mavlink_message_t& m) { sent.append(m); return true; }});
+    service.requestParameters();
+    QCOMPARE(sent.size(), 1);
+    QCOMPARE(sent.first().msgid, uint32_t(MAVLINK_MSG_ID_PARAM_EXT_REQUEST_LIST));
+    QCOMPARE(sent.first().sysid, uint8_t(MAVLinkProtocol::instance()->getSystemId()));
+    mavlink_param_ext_request_list_t request{};
+    mavlink_msg_param_ext_request_list_decode(&sent.first(), &request);
+    QCOMPARE(request.target_system, uint8_t(7));
+    QCOMPARE(request.target_component, uint8_t(191));
+    QVERIFY(service.isLoading());
 }

@@ -8,11 +8,20 @@
 #include <QtCore/QVariantMap>
 #include <QtCore/QMap>
 #include <QtCore/QTimer>
+#include <functional>
 
 #include "ITelemetryHandler.h"
-#include "Vehicle.h"
 
 class Fact;
+
+/// Where PARAM_EXT_* goes: the CC's system id, the MAVLink channel of the link its heartbeat came in on, and the send
+/// function. No Vehicle: the CC must be configurable while the FC is silent.
+struct CompanionTransport {
+    int systemId{-1};
+    uint8_t channel{0};
+    std::function<bool(const mavlink_message_t&)> send;
+    bool valid() const { return systemId > 0 && bool(send); }
+};
 
 struct CCParamMeta {
     QString name;
@@ -59,15 +68,16 @@ public:
     int modifiedCount() const { return _modifiedCount; }
     QStringList groups() const { return _groups; }
 
-    void requestParameters(Vehicle* vehicle);
+    void setTransport(CompanionTransport t) { _transport = std::move(t); }
+    void requestParameters();
     void stageParameter(const QString& name, const QVariant& value);
     void resetParameter(const QString& name);
     void resetToDefault(const QString& name);
     void resetAllModified();
     /// Sends PARAM_EXT_SET for every modified parameter and returns the names it sent (their ACKs arrive via parameterSaved).
-    QStringList saveModifiedParameters(Vehicle* vehicle);
+    QStringList saveModifiedParameters();
     /// Parameters the CC has not yet reported; read one by one after a LIST because the CC omits what it cannot read.
-    void readMissing(Vehicle* vehicle);
+    void readMissing();
     int syncedCount() const;
     bool isModified(const QString& name) const { return _isModified.value(name, false); }
     QStringList allFactNames() const { return _order; }
@@ -77,7 +87,7 @@ public:
     int stagedSubsystem(const QString& name) const;
     /// Facts for the Parameters editor, in catalog order. Edits made on them are staged here.
     QList<Fact*> allFacts() const;
-    void sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value);
+    void sendSingleParamSet(const QString& name, const QVariant& value);
 
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
     bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
@@ -121,4 +131,5 @@ private:
     QMap<QString, QVariant> _stagedValues;
     QMap<QString, bool> _isModified;
     QMap<QString, bool> _isPending;
+    CompanionTransport _transport;
 };

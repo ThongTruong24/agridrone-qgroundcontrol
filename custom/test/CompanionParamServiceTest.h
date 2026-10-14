@@ -21,4 +21,5 @@ private slots:
     void _testUnknownParamsNotWritable();
     void _testFactsAreDeveloperCategoryAndEditsAreStaged();
     void _testEditorFactOrderAndStagedSubsystems();
+    void _testRequestGoesToTransportWithoutVehicle();
 };

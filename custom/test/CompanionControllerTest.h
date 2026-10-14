@@ -13,6 +13,8 @@ private slots:
     void _testSourceFiltering();
     void _testStaleAndReset();
     void _testToolbarPopupsLoad();
+    void _testLinkApplyWithoutVehicle();
+    void _testApplyNotResentWhenCompanionSilent();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -47,4 +49,5 @@ private slots:
     void _testPlayerFollowsConfirmedMode();
     void _testReplaceIgnoresStaleKeepalive();
     void _testReplaceRefusedKeepsOldOp();
+    void _testMessageProcessedOnce();
 };

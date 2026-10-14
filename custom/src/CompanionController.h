@@ -12,6 +12,8 @@
 #include <QtCore/QVariantMap>
 #include <QtCore/QTimer>
 #include <QtQmlIntegration/QtQmlIntegration>
+#include <functional>
+#include "LinkInterface.h"
 #include "QGCMAVLink.h"
 #include "Vehicle.h"
 
@@ -152,7 +154,6 @@ class CompanionController : public QObject
     // Transport Protocol & Dynamic Ports from CC
     Q_PROPERTY(QString transportProtocol READ transportProtocol NOTIFY linksChanged)
     Q_PROPERTY(QStringList availablePorts READ availablePorts NOTIFY availablePortsChanged)
-    Q_PROPERTY(int vehicleEpoch READ vehicleEpoch NOTIFY vehicleEpochChanged)
     Q_PROPERTY(bool vehicleAvailable READ vehicleAvailable NOTIFY vehicleAvailableChanged)
 
     // System Properties (from CC_TELEMETRY_SYSTEM 42014)
@@ -296,7 +297,7 @@ public:
 
     // Extended Parameters QML Invokables
     Q_INVOKABLE void requestCcParameters() {
-        if (_paramService) _paramService->requestParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
+        if (_paramService && companionState().value("connected").toBool()) _paramService->requestParameters();
     }
     QVariantMap cameraStreamState() const { return streamState("camera"); }
     QVariantMap visionStreamState() const { return streamState("vision"); }
@@ -321,13 +322,18 @@ public:
     /// It stays available after the operation ends, until the next one starts. origin: "stream" (camera and Vision) or "companion".
     Q_INVOKABLE QVariantMap operationState(const QString& origin) const;
 
-    // Called by the MAV command queue for the APPLY_CONFIG this controller sent (see advanceToolbarOperation).
+    // The CC's COMMAND_ACK for the APPLY_CONFIG this controller sent (see advanceToolbarOperation); noResponse = CC silent.
     void onApplyProgress(uint8_t progress);
-    void onApplyResult(uint8_t result, int failureCode);
+    void onApplyResult(uint8_t result, bool noResponse);
+
+    /// One send path to the CC, Vehicle or not: the link its heartbeat came in on (spec §5).
+    bool sendToCompanion(const mavlink_message_t& message);
+    /// COMMAND_LONG to the CC, sent once: a lost ACK is settled by telemetry/readback, never by a resend.
+    bool sendCompanionCommand(uint16_t command, float param1, float param2 = 0);
 
     // Test-time introspection helpers (available in all builds via friendship)
     bool vehicleAvailable() const { return _activeVehicle != nullptr; }
-    int  vehicleEpoch()     const { return _vehicleEpoch; }
+    int  ccSessionEpoch()   const { return _ccSessionEpoch; }
     bool linksReceived()    const { return _linksService ? _linksService->hasLinksTelemetry() : false; }
     bool linksStale()       const { return _linksStale; }
     bool cameraReceived()   const { return _hasCameraTelemetry; }
@@ -344,7 +350,8 @@ public:
     QVariantMap ccTelemetrySystem() const;
 
     // Test helpers
-    void processMessageForTest(const mavlink_message_t& message) { _onMavlinkMessageReceived(message); }
+    void processMessageForTest(const mavlink_message_t& message, LinkInterface* link = nullptr) { _onMavlinkMessageReceived(message, link); }
+    void setSendHookForTest(std::function<bool(const mavlink_message_t&)> hook);
     void resetForTest();
     void forceStaleForTest();
     void setReceivedAgeForTest(const QString& key, qint64 ageMs);
@@ -360,7 +367,6 @@ signals:
     void linksChanged();
     void availablePortsChanged();
     void ccParametersLoadingChanged();
-    void vehicleEpochChanged();
     void vehicleAvailableChanged();
     void systemChanged();
     void toastChanged();
@@ -368,11 +374,13 @@ signals:
 
 private slots:
     void _setActiveVehicle(Vehicle* vehicle);
-    void _onMavlinkMessageReceived(const mavlink_message_t& message);
+    void _onMavlinkMessageReceived(const mavlink_message_t& message, LinkInterface* receivedOn = nullptr);
 
 private:
     void _showToast(const QString& msg, bool isError);
     void _clearTelemetryState();
+    CompanionTransport transport();
+    void onCompanionLost();
 
     QVariantMap streamState(const QString& stream) const;
     bool beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem = 0,
@@ -430,6 +438,7 @@ private:
         QString lastText;                // last STATUSTEXT of the operation's group
         QMap<QString, QVariant> effectCandidate;
         int epoch{0};
+        uint16_t command{0};             // the COMMAND_LONG awaiting the CC's COMMAND_ACK
     };
     std::optional<ToolbarOperation> _toolbarOperation;
     QTimer* _toolbarOperationTimer{nullptr};
@@ -538,7 +547,10 @@ private:
     int _sourceSystemId = -1;
     int _sourceComponentId = -1;
     bool _linksStale = false;
-    int _vehicleEpoch = 0;
+    WeakLinkInterfacePtr _ccLink;     // the link the CC heartbeat came in on
+    int _ccSessionEpoch = 0;          // +1 when the CC heartbeat starts (first, or back after > 3.5 s)
+    bool _ccLost = false;
+    std::function<bool(const mavlink_message_t&)> _sendHook;
 
 };
 

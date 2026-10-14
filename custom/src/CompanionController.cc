@@ -1,10 +1,8 @@
 #include <QTimer>
 #include "CompanionController.h"
 
-#include <QtCore/QPointer>
 #include "MultiVehicleManager.h"
 #include "MAVLinkProtocol.h"
-#include "VehicleLinkManager.h"
 #include "LinkManager.h"
 #include "Companion/CompanionProtocol.h"
 #include "AppMessages.h"
@@ -58,16 +56,6 @@ QString stageText(int subsystem, int progress)
     }
     return QStringLiteral("%1%").arg(progress);
 }
-
-void applyProgressHandler(void* data, int, const mavlink_command_ack_t& ack)
-{
-    static_cast<CompanionController*>(data)->onApplyProgress(ack.progress);
-}
-
-void applyResultHandler(void* data, int, const mavlink_command_ack_t& ack, Vehicle::MavCmdResultFailureCode_t failure)
-{
-    static_cast<CompanionController*>(data)->onApplyResult(ack.result, failure);
-}
 }
 
 CompanionController::CompanionController(QObject* parent)
@@ -82,7 +70,14 @@ CompanionController::CompanionController(QObject* parent)
     connect(_setAckTimer, &QTimer::timeout, this, [this]() { setAckTimedOut(); });
     auto freshnessTimer = new QTimer(this);
     freshnessTimer->setInterval(500);
-    connect(freshnessTimer, &QTimer::timeout, this, [this]() { checkToolbarEffect(); emit toolbarStateChanged(); });
+    connect(freshnessTimer, &QTimer::timeout, this, [this]() {
+        if (!_ccLost && _toolbarReceived.contains("heartbeat") && !companionState().value("connected").toBool()) {
+            _ccLost = true;
+            onCompanionLost();
+        }
+        checkToolbarEffect();
+        emit toolbarStateChanged();
+    });
     freshnessTimer->start();
     // SOLID: Decoupled services
     _linksService = new CompanionLinksService(this);
@@ -121,8 +116,8 @@ CompanionController::CompanionController(QObject* parent)
     _ccSyncTimer = new QTimer(this);
     _ccSyncTimer->setInterval(30000);
     connect(_ccSyncTimer, &QTimer::timeout, this, [this]() {
-        if (_activeVehicle && !_paramService->isLoading() && !_toolbarOperation) {
-            _paramService->requestParameters(_activeVehicle.data());
+        if (companionState().value("connected").toBool() && !_paramService->isLoading() && !_toolbarOperation) {
+            _paramService->requestParameters();
         }
     });
     _ccSyncTimer->start();
@@ -134,10 +129,7 @@ CompanionController::CompanionController(QObject* parent)
 
     // Ingest all MAVLink messages directly via MAVLinkProtocol (same as MAVLinkInspector)
     connect(MAVLinkProtocol::instance(), &MAVLinkProtocol::messageReceived,
-            this, [this](LinkInterface* link, const mavlink_message_t& message) {
-                Q_UNUSED(link);
-                _onMavlinkMessageReceived(message);
-            });
+            this, [this](LinkInterface* link, const mavlink_message_t& message) { _onMavlinkMessageReceived(message, link); });
 
     _telemetryWatchdog = new QTimer(this);
     _telemetryWatchdog->setInterval(3500); // 3.5s timeout for 1Hz telemetry
@@ -255,28 +247,51 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
 {
     if (_activeVehicle == vehicle) return;
 
-    if (_activeVehicle) {
+    // The CC session does not hang on the FC's Vehicle: it ends with it only when the CC heartbeat is stale too.
+    if (_activeVehicle && !companionState().value("connected").toBool()) {
         _clearTelemetryState();
         _sourceSystemId    = -1;
         _sourceComponentId = -1;
-        _vehicleEpoch++;
-        emit vehicleEpochChanged();
     }
 
     _activeVehicle = vehicle;
     emit vehicleConnectedChanged();
     emit vehicleAvailableChanged();
-    if (_activeVehicle) {
-        QTimer::singleShot(3000, this, [this, vehiclePtr = QPointer<Vehicle>(_activeVehicle.data())]() {
-            if (vehiclePtr && vehiclePtr == _activeVehicle && !_paramService->isLoading()) _paramService->requestParameters(vehiclePtr);
-        });
-    }
+}
 
-    if (_activeVehicle) {
-        connect(_activeVehicle, &Vehicle::mavlinkMessageReceived, this,
-                &CompanionController::_onMavlinkMessageReceived, Qt::UniqueConnection);
-        // connected
-    }
+CompanionTransport CompanionController::transport()
+{
+    const auto link = _ccLink.lock();
+    return {_sourceSystemId, link ? link->mavlinkChannel() : uint8_t(0),
+            [this](const mavlink_message_t& m) { return sendToCompanion(m); }};
+}
+
+bool CompanionController::sendToCompanion(const mavlink_message_t& message)
+{
+    if (_sendHook) return _sendHook(message);
+    return Companion::sendMessage(nullptr, _ccLink.lock(), message); // no Vehicle needed (spec §5)
+}
+
+bool CompanionController::sendCompanionCommand(uint16_t command, float param1, float param2)
+{
+    if (_sourceSystemId < 0) return false;
+    const auto link = _ccLink.lock();
+    mavlink_message_t msg;
+    mavlink_msg_command_long_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+        link ? link->mavlinkChannel() : 0, &msg, static_cast<uint8_t>(_sourceSystemId), kCompanionCompId, command, 0,
+        param1, param2, 0, 0, 0, 0, 0);
+    return sendToCompanion(msg); // sent once: a lost ACK is settled by telemetry/readback, never by a resend
+}
+
+void CompanionController::setSendHookForTest(std::function<bool(const mavlink_message_t&)> hook)
+{
+    _sendHook = std::move(hook);
+    if (_sourceSystemId > 0) _paramService->setTransport(transport());
+}
+
+void CompanionController::onCompanionLost()
+{
+    finishToolbarOperation(tr("Mất kết nối Companion"));
 }
 
 void CompanionController::_showToast(const QString& msg, bool isError)
@@ -295,7 +310,7 @@ void CompanionController::_showToast(const QString& msg, bool isError)
     });
 }
 
-void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& message)
+void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& message, LinkInterface* receivedOn)
 {
     if (!_activeVehicle) {
         Vehicle* active = MultiVehicleManager::instance()->activeVehicle();
@@ -304,14 +319,9 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         }
     }
 
-    // Require active vehicle match if active vehicle is known
-    if (_activeVehicle && message.sysid != _activeVehicle->id()) {
-        return;
-    }
-
     if (message.msgid == 253) { // MAVLINK_MSG_ID_STATUSTEXT
         // Only the group of the running operation: "Links: ", "Hotspot: ", "Camera: ", "Vision: ".
-        if (message.compid != kCompanionCompId || !_toolbarOperation) return;
+        if (message.compid != kCompanionCompId || message.sysid != _sourceSystemId || !_toolbarOperation) return;
         mavlink_statustext_t st;
         mavlink_msg_statustext_decode(&message, &st);
         const QString text = QString::fromLatin1(st.text, qstrnlen(st.text, sizeof(st.text))).trimmed();
@@ -346,8 +356,32 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
     }
 
     if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
+        if (receivedOn) _ccLink = LinkManager::instance()->sharedLinkInterfacePointerForLink(receivedOn);
+        const bool sessionStart = !companionState().value("connected").toBool(); // first heartbeat, or back after > 3.5 s
         _toolbarReceived["heartbeat"] = _toolbarClock.elapsed();
+        if (sessionStart) {
+            _ccLost = false;
+            ++_ccSessionEpoch;
+            _paramService->setTransport(transport());
+            if (!_paramService->isLoading()) _paramService->requestParameters();
+        }
         emit toolbarStateChanged();
+        return;
+    }
+    if (message.msgid == MAVLINK_MSG_ID_COMMAND_ACK) {
+        // QGC's own client for the command it sent the CC (no MavCommandQueue: no resend).
+        if (_toolbarOperation && _toolbarOperation->applySent && !_toolbarOperation->resultSeen) {
+            mavlink_command_ack_t ack;
+            mavlink_msg_command_ack_decode(&message, &ack);
+            if (ack.command != _toolbarOperation->command) return;
+            if (ack.result == MAV_RESULT_IN_PROGRESS) {
+                onApplyProgress(ack.progress);
+                _setAckTimer->start(silenceMs());
+            } else {
+                _setAckTimer->stop();
+                onApplyResult(ack.result, false);
+            }
+        }
         return;
     }
     if (_telemetryWatchdog) {
@@ -732,8 +766,8 @@ QString publishUrlError(const QString& input)
 bool CompanionController::beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem,
                                                 const QString& origin, const QStringList& skippedNotes)
 {
-    if (_paramService->isLoading() || _toolbarOperation || !_activeVehicle || (!streamGroup(group) && _activeVehicle->armed()) || !_sourceComponentId ||
-        _sourceComponentId != kCompanionCompId || _sourceSystemId != _activeVehicle->id()) return false;
+    if (_paramService->isLoading() || _toolbarOperation || !companionState().value("connected").toBool() ||
+        _sourceComponentId != kCompanionCompId || (!streamGroup(group) && _activeVehicle && _activeVehicle->armed())) return false;
     if (subsystem == 1) {
         for (const auto& item : serialLinks()) {
             const auto link = item.toMap();
@@ -762,12 +796,12 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
         }
     }
     ToolbarOperation op;
-    op.group = group; op.subsystem = subsystem; op.epoch = _vehicleEpoch;
+    op.group = group; op.subsystem = subsystem; op.epoch = _ccSessionEpoch;
     for (const auto &entry : values) op.effectCandidate[entry.first] = entry.second;
     QMap<QString, QVariant> anticipated;
     for (const auto& entry : values) {
         auto confirmed = anticipated.contains(entry.first) ? anticipated.value(entry.first) : _paramService->confirmedValue(entry.first);
-        if (!confirmed.isValid()) { _paramService->requestParameters(_activeVehicle); return false; }
+        if (!confirmed.isValid()) { _paramService->requestParameters(); return false; }
         const bool forced = entry.first == kModeId; // setStreamMode decides; a cancel resends the confirmed mode
         if (forced || confirmed.toString() != entry.second.toString()) {
             op.values.append(entry); op.previous[entry.first] = confirmed; anticipated[entry.first] = entry.second;
@@ -789,7 +823,7 @@ void CompanionController::advanceToolbarOperation()
 {
     if (!_toolbarOperation) return;
     auto &op = *_toolbarOperation;
-    if (!_activeVehicle || op.epoch != _vehicleEpoch || (!streamGroup(op.group) && _activeVehicle->armed())) { finishToolbarOperation("Vehicle changed or armed"); return; }
+    if (op.epoch != _ccSessionEpoch) { finishToolbarOperation(tr("Mất kết nối Companion")); return; }
     if (op.next < op.values.size()) {
         const auto entry = op.values[op.next++];
         op.awaiting = entry.first;
@@ -799,7 +833,7 @@ void CompanionController::advanceToolbarOperation()
         addOperationStep("tx", QStringLiteral("%1PARAM_EXT_SET %2=%3").arg(op.rollingBack ? QStringLiteral("(rollback) ") : QString(), entry.first,
                          secret ? QStringLiteral("<hidden>") : entry.second.toString()), "waiting");
         _setAckTimer->start(streamGroup(op.group) ? silenceMs() : firstAckMs());
-        _paramService->sendSingleParamSet(_activeVehicle, entry.first, entry.second);
+        _paramService->sendSingleParamSet(entry.first, entry.second);
         return;
     }
     op.awaiting.clear();
@@ -808,14 +842,11 @@ void CompanionController::advanceToolbarOperation()
     if (op.subsystem) {
         op.waitingCommand = true;
         op.applySent = true;
+        op.command = MAV_CMD_THACO_APPLY_CONFIG;
         op.effectAfter = _toolbarClock.elapsed();
-        Vehicle::MavCmdAckHandlerInfo_t info{};
-        info.resultHandler = &applyResultHandler;
-        info.resultHandlerData = this;
-        info.progressHandler = &applyProgressHandler;
-        info.progressHandlerData = this;
         addOperationStep("tx", QStringLiteral("APPLY %1").arg(op.group), "waiting");
-        _activeVehicle->sendMavCommandWithHandler(&info, kCompanionCompId, static_cast<MAV_CMD>(MAV_CMD_THACO_APPLY_CONFIG), op.subsystem, 1);
+        sendCompanionCommand(MAV_CMD_THACO_APPLY_CONFIG, op.subsystem, 1);
+        _setAckTimer->start(silenceMs()); // 3 s of CC silence ends the wait (spec §5)
     } else finishToolbarOperation();
 }
 
@@ -888,7 +919,7 @@ void CompanionController::finishToolbarOperation(const QString& error)
     _toolbarOperation.reset();
     _toolbarErrors[group] = error;
     emit toolbarStateChanged();
-    if (!error.isEmpty() && _activeVehicle) _paramService->requestParameters(_activeVehicle);
+    if (!error.isEmpty()) _paramService->requestParameters();
 }
 
 QVariantMap CompanionController::operationState(const QString& origin) const
@@ -939,11 +970,11 @@ void CompanionController::onApplyProgress(uint8_t progress)
     if ((op.subsystem == 1 && progress >= 50) || (op.subsystem == 3 && progress >= 35)) op.gapTolerant = true;
 }
 
-void CompanionController::onApplyResult(uint8_t result, int failureCode)
+void CompanionController::onApplyResult(uint8_t result, bool noResponse)
 {
     if (!_toolbarOperation || !_toolbarOperation->applySent || _toolbarOperation->resultSeen) return;
     auto& op = *_toolbarOperation;
-    if (failureCode == Vehicle::MavCmdResultFailureNoResponseToCommand) {
+    if (noResponse) {
         // The ACK travels through the router/AP the CC is restarting: the change may well have worked.
         if (op.gapTolerant) { enterTelemetryWait(); return; }
         op.resultSeen = true;
@@ -951,10 +982,6 @@ void CompanionController::onApplyResult(uint8_t result, int failureCode)
         return;
     }
     op.resultSeen = true;
-    if (failureCode == Vehicle::MavCmdResultFailureDuplicateCommand) {
-        finishToolbarOperation(tr("Lệnh APPLY trước đó chưa kết thúc, thử lại sau"));
-        return;
-    }
     if (result != MAV_RESULT_ACCEPTED) {
         settleWaitingSteps("error");
         QString reason = op.lastText;
@@ -988,6 +1015,7 @@ void CompanionController::enterTelemetryWait()
 
 void CompanionController::setAckTimedOut()
 {
+    if (_toolbarOperation && _toolbarOperation->applySent && !_toolbarOperation->resultSeen) { onApplyResult(0, true); return; }
     if (!_toolbarOperation || _toolbarOperation->awaiting.isEmpty()) return;
     // Silence is a lost link or a dead CC, not a failed change: the CC may still finish it.
     if (streamGroup(_toolbarOperation->group)) { endUnconfirmed(tr("CC không phản hồi")); return; }

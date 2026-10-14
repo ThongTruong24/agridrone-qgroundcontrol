@@ -1,11 +1,7 @@
 #include "CompanionParamService.h"
 
-#include <QtCore/QPointer>
 #include "Fact.h"
 #include "MAVLinkProtocol.h"
-#include "MultiVehicleManager.h"
-#include "LinkManager.h"
-#include "VehicleLinkManager.h"
 
 #include <QtCore/QDebug>
 #include <QtCore/QFile>
@@ -272,10 +268,10 @@ void CompanionParamService::_updateModifiedCount()
     }
 }
 
-void CompanionParamService::requestParameters(Vehicle* vehicle)
+void CompanionParamService::requestParameters()
 {
-    if (!vehicle) {
-        emit logMessage("PARAM", "ERR", "Cannot request CC params: Vehicle not connected", 3);
+    if (!_transport.valid()) {
+        emit logMessage("PARAM", "ERR", "Cannot request CC params: no Companion heartbeat yet", 3);
         return;
     }
 
@@ -286,37 +282,12 @@ void CompanionParamService::requestParameters(Vehicle* vehicle)
     emit isLoadingChanged();
 
     mavlink_message_t msg;
-    mavlink_param_ext_request_list_t req;
-    req.target_system = static_cast<uint8_t>(vehicle->id());
-    req.target_component = kCompanionComponentId;
-
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-    if (!sharedLink) return;
-
-    mavlink_msg_param_ext_request_list_pack_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::instance()->getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        req.target_system,
-        req.target_component);
-
-    vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    mavlink_msg_param_ext_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+        _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId);
+    _transport.send(msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_LIST sent to Comp %1").arg(kCompanionComponentId), 6);
     // The CC leaves out parameters it cannot read at this moment; ask for those individually once the LIST is done.
-    QTimer::singleShot(4000, this, [this, vehiclePtr = QPointer<Vehicle>(vehicle)]() { readMissing(vehiclePtr); });
+    QTimer::singleShot(4000, this, [this]() { readMissing(); });
 }
 
 void CompanionParamService::stageParameter(const QString& name, const QVariant& value)
@@ -366,11 +337,11 @@ void CompanionParamService::resetAllModified()
     emit paramListChanged();
 }
 
-QStringList CompanionParamService::saveModifiedParameters(Vehicle* vehicle)
+QStringList CompanionParamService::saveModifiedParameters()
 {
     QStringList sent;
-    if (!vehicle) {
-        emit logMessage("PARAM", "ERR", "Cannot save CC params: Vehicle not connected", 3);
+    if (!_transport.valid()) {
+        emit logMessage("PARAM", "ERR", "Cannot save CC params: no Companion heartbeat yet", 3);
         return sent;
     }
 
@@ -381,7 +352,7 @@ QStringList CompanionParamService::saveModifiedParameters(Vehicle* vehicle)
                 _isModified[name] = false; // the CC already has this value: nothing to write, no ACK to wait for
                 continue;
             }
-            sendSingleParamSet(vehicle, name, _stagedValues.value(name));
+            sendSingleParamSet(name, _stagedValues.value(name));
             sent.append(name);
         }
     }
@@ -411,9 +382,9 @@ QList<Fact*> CompanionParamService::allFacts() const
     return facts;
 }
 
-void CompanionParamService::sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value)
+void CompanionParamService::sendSingleParamSet(const QString& name, const QVariant& value)
 {
-    if (!vehicle || !_meta.contains(name)) return;
+    if (!_transport.valid() || !_meta.contains(name)) return;
     if (_meta[name].readOnly) return;
     // A lost ACK leaves a write uncertain; rollback must resend even the old readback value.
     if (!_isPending.value(name) && confirmedValue(name).isValid() && confirmedValue(name).toString() == value.toString()) return;
@@ -428,34 +399,11 @@ void CompanionParamService::sendSingleParamSet(Vehicle* vehicle, const QString& 
     _encodeValue(value, meta.type, valBuf);
 
     mavlink_message_t msg;
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-    if (!sharedLink) return;
-
-    mavlink_msg_param_ext_set_pack_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::instance()->getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        static_cast<uint8_t>(vehicle->id()),
-        kCompanionComponentId,
-        paramIdBuf,
-        valBuf,
-        meta.type);
+    mavlink_msg_param_ext_set_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+        _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId, paramIdBuf, valBuf, meta.type);
 
     _isPending[name] = true;
-    vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    _transport.send(msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, meta.isSecret ? QStringLiteral("<hidden>") : value.toString()), 6);
 }
 
@@ -644,13 +592,9 @@ int CompanionParamService::syncedCount() const
     return count;
 }
 
-void CompanionParamService::readMissing(Vehicle* vehicle)
+void CompanionParamService::readMissing()
 {
-    if (!vehicle) return;
-
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle->vehicleLinkManager()) sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    if (!sharedLink) return;
+    if (!_transport.valid()) return;
 
     int requested = 0;
     for (const QString& name : _order) {
@@ -660,9 +604,9 @@ void CompanionParamService::readMissing(Vehicle* vehicle)
         std::memcpy(idBuf, id.constData(), std::min<size_t>(id.size(), sizeof(idBuf)));
         mavlink_message_t msg;
         mavlink_msg_param_ext_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
-            MAVLinkProtocol::instance()->getComponentId(), sharedLink->mavlinkChannel(), &msg,
-            static_cast<uint8_t>(vehicle->id()), kCompanionComponentId, idBuf, -1);
-        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+            MAVLinkProtocol::getComponentId(), _transport.channel, &msg,
+            static_cast<uint8_t>(_transport.systemId), kCompanionComponentId, idBuf, -1);
+        _transport.send(msg);
         ++requested;
     }
     if (requested) emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_READ for %1 parameter(s) missing after LIST").arg(requested), 6);
