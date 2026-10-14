@@ -44,18 +44,20 @@ QString stageText(int subsystem, int progress)
         switch (progress) {
         case 20: return QObject::tr("Kiểm tra cấu hình link");
         case 50: return QObject::tr("Router mở lại cổng nối tiếp");
-        case 80: return QObject::tr("Đang lưu");
+        case 90: return QObject::tr("Đã áp dụng");
         }
     } else if (subsystem == 3) {
         switch (progress) {
         case 15: return QObject::tr("Kiểm tra cấu hình hotspot");
         case 35: return QObject::tr("Khởi động lại dịch vụ mạng");
         case 60: return QObject::tr("Chờ điểm phát WiFi lên");
-        case 85: return QObject::tr("Đang lưu");
+        case 90: return QObject::tr("Đã áp dụng");
         }
     }
     return QStringLiteral("%1%").arg(progress);
 }
+
+QString lockReason(bool locked) { return locked ? QObject::tr("Companion đang khóa cấu hình (máy bay ARM)") : QString(); }
 }
 
 CompanionController::CompanionController(QObject* parent)
@@ -95,7 +97,11 @@ CompanionController::CompanionController(QObject* parent)
         emit vehicleConnectedChanged();
     });
     connect(_linksService, &CompanionLinksService::availablePortsChanged, this, &CompanionController::availablePortsChanged);
-    connect(_paramService, &CompanionParamService::paramListChanged, this, [this]() { syncPlayerToMode(); emit toolbarStateChanged(); });
+    connect(_paramService, &CompanionParamService::paramListChanged, this, [this]() {
+        syncPlayerToMode();
+        checkReadbackAfterReconnect();
+        emit toolbarStateChanged();
+    });
     connect(_paramService, &CompanionParamService::isLoadingChanged, this, &CompanionController::ccParametersLoadingChanged);
     connect(_paramService, &CompanionParamService::parameterAckInProgress, this, [this](const QString& name) {
         // Nothing pending for it: a keepalive that trails the final ACK (the CC may send one just after FAILED).
@@ -148,7 +154,7 @@ bool CompanionController::vehicleConnected() const
 
 void CompanionController::_clearTelemetryState()
 {
-    if (_toolbarOperation) finishToolbarOperation("Companion disconnected");
+    onCompanionLost(); // the watchdog and the heartbeat follow one rule
     _toolbarReceived.clear();
     _streamTelemetry.clear();
     _networkConfigVersion = 0;
@@ -256,6 +262,8 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
         _ccLink.reset();
         _paramService->setTransport({}); // before the clear: its failed-op re-read must not reach the old CC
         ++_ccSessionEpoch;
+        _unsaved.clear(); // the next CC locked may not be the one that confirmed the APPLY
+        if (otherSystem) finishToolbarOperation(tr("Mất kết nối Companion")); // that CC cannot come back while this Vehicle is active
         _clearTelemetryState();
     }
 
@@ -297,7 +305,74 @@ void CompanionController::setSendHookForTest(std::function<bool(const mavlink_me
 
 void CompanionController::onCompanionLost()
 {
-    finishToolbarOperation(tr("Mất kết nối Companion"));
+    if (!_toolbarOperation) return;
+    auto& op = *_toolbarOperation;
+    if (op.command != MAV_CMD_THACO_APPLY_CONFIG) { finishToolbarOperation(tr("Mất kết nối Companion")); return; }
+    // The APPLY restarts the router/AP that may carry this very link: wait without deadline, then read back (spec §5).
+    if (op.waitingReconnect) return;
+    _setAckTimer->stop();
+    _toolbarOperationTimer->stop();
+    op.resultSeen = true;
+    op.waitingReconnect = true;
+    settleWaitingSteps("done");
+    addOperationStep("info", tr("Chưa xác nhận, đang chờ kết nối lại"), "waiting");
+}
+
+void CompanionController::onCompanionSessionStarted()
+{
+    if (!_toolbarOperation || !_toolbarOperation->waitingReconnect) return;
+    auto& op = *_toolbarOperation;
+    if (_sourceSystemId != op.systemId) { finishToolbarOperation(tr("Mất kết nối Companion")); return; } // not the CC that applied it
+    op.epoch = _ccSessionEpoch;
+    op.readbackRequested = true;
+    // Only values read in this session count, not what the SET ACKs left before the loss.
+    for (auto it = op.effectCandidate.cbegin(); it != op.effectCandidate.cend(); ++it) _paramService->forgetConfirmed(it.key());
+    settleWaitingSteps("done");
+    addOperationStep("tx", tr("Đọc lại tham số"), "waiting");
+}
+
+void CompanionController::checkReadbackAfterReconnect()
+{
+    if (!_toolbarOperation || !_toolbarOperation->readbackRequested) return;
+    const auto& op = *_toolbarOperation;
+    for (auto it = op.effectCandidate.cbegin(); it != op.effectCandidate.cend(); ++it) {
+        if (_paramService->isSecret(it.key())) continue; // never echoed back
+        const auto value = _paramService->confirmedValue(it.key());
+        if (!value.isValid()) return; // not read back yet
+        if (value.toString() != it.value().toString()) { finishToolbarOperation(tr("Không áp dụng được")); return; }
+    }
+    finishToolbarOperation();
+}
+
+void CompanionController::cancelCompanionWait()
+{
+    if (_toolbarOperation && _toolbarOperation->waitingReconnect) endUnconfirmed(tr("Đã hủy chờ"));
+}
+
+bool CompanionController::configLocked() const
+{
+    const bool fresh = _toolbarReceived.contains("system") && _toolbarClock.elapsed() - _toolbarReceived.value("system") <= 3500;
+    return (fresh && (_systemStatus & CC_SYS_STATUS_CONFIG_LOCKED)) || (_activeVehicle && _activeVehicle->armed());
+}
+
+bool CompanionController::saveCompanionGroup(const QString& group)
+{
+    const int subsystem = group == QLatin1String("links") ? 1 : group == QLatin1String("hotspot") ? 3 : 0;
+    // Only what the group's last APPLY confirmed: SAVE persists whatever the CC runs now (spec §7).
+    if (!subsystem || !_unsaved.value(group) || _toolbarOperation || !companionState().value("connected").toBool() || configLocked()) return false;
+    ToolbarOperation op;
+    op.group = group; op.subsystem = subsystem; op.origin = QStringLiteral("companion");
+    op.epoch = _ccSessionEpoch; op.systemId = _sourceSystemId; op.startedMs = _toolbarClock.elapsed();
+    op.applySent = true; op.waitingCommand = true; op.command = MAV_CMD_THACO_SAVE_DEFAULT_CONFIG;
+    _toolbarErrors.remove(group);
+    _toolbarOperation = op;
+    addOperationStep("tx", QStringLiteral("SAVE %1").arg(group), "waiting");
+    if (!sendCompanionCommand(MAV_CMD_THACO_SAVE_DEFAULT_CONFIG, subsystem)) {
+        finishToolbarOperation(tr("Không gửi được tới Companion"));
+        return false;
+    }
+    _setAckTimer->start(silenceMs());
+    return true;
 }
 
 void CompanionController::_showToast(const QString& msg, bool isError)
@@ -344,7 +419,6 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
             }
             if (!op.awaiting.isEmpty()) _setAckTimer->start(silenceMs());
         }
-        if (text.endsWith(QStringLiteral("applied but not saved"))) op.notSaved = true;
         addOperationStep("info", text, "done");
         return;
     }
@@ -372,6 +446,7 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
             ++_ccSessionEpoch;
             _paramService->setTransport(transport());
             if (!_paramService->isLoading()) _paramService->requestParameters();
+            onCompanionSessionStarted();
         }
         emit toolbarStateChanged();
         return;
@@ -538,6 +613,7 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         _diskUsage = sys.disk_usage;
         _cpuTemp = sys.cpu_temp;
         _uptimeS = sys.system_uptime_s;
+        _systemStatus = sys.system_status;
 
         emit systemChanged();
         emit toolbarStateChanged();
@@ -721,7 +797,6 @@ QVariantMap CompanionController::streamReason(const QString& stream) const
     const bool camera = stream == "camera";
     const QString label = camera ? QStringLiteral("Video") : QStringLiteral("Vision");
     const auto r = [](int code, const QString& text) { return QVariantMap{{"code", code}, {"text", text}}; };
-    if (!_activeVehicle) return r(1, tr("Chưa kết nối vehicle"));
     if (!companionState().value("connected").toBool()) return r(2, tr("Mất kết nối tới Companion"));
     if (!_toolbarReceived.contains(stream)) return r(3, tr("Chưa nhận telemetry %1 từ Companion. Node %1 có thể chưa chạy").arg(label));
     const qint64 age = _toolbarClock.elapsed() - _toolbarReceived.value(stream);
@@ -739,8 +814,11 @@ QVariantMap CompanionController::companionState() const
 {
     const bool heartbeat = _toolbarReceived.contains("heartbeat") && _toolbarClock.elapsed() - _toolbarReceived.value("heartbeat") <= 3500;
     const bool fresh = _toolbarReceived.contains("system") && _toolbarClock.elapsed() - _toolbarReceived.value("system") <= 3500;
+    const bool locked = configLocked();
     return {{"connected", heartbeat}, {"pending", bool(_toolbarOperation)}, {"fresh", fresh}, {"linkError", _toolbarErrors.value("links")}, {"name", fresh ? _companionName : QString()},
-        {"cpuUsage", fresh ? QVariant(_cpuUsage) : QVariant()}, {"cpuTemp", fresh ? QVariant(_cpuTemp) : QVariant()}};
+        {"cpuUsage", fresh ? QVariant(_cpuUsage) : QVariant()}, {"cpuTemp", fresh ? QVariant(_cpuTemp) : QVariant()},
+        {"locked", locked}, {"lockReason", lockReason(locked)}, {"unsaved", _unsaved.value("links")},
+        {"waitingReconnect", _toolbarOperation && _toolbarOperation->waitingReconnect}};
 }
 
 QVariantMap CompanionController::hotspotState() const
@@ -751,7 +829,8 @@ QVariantMap CompanionController::hotspotState() const
         {"ssid", fresh ? _apSsid : QString()}, {"open", fresh && _apStatus == CC_NET_STATUS_UP},
         {"ipCidr", fresh ? _apIp + "/" + QString::number(_apPrefixLength) : QString()},
         {"dhcpEnabled", fresh && _apDhcpEnabled}, {"pending", _toolbarOperation && _toolbarOperation->group == "hotspot"},
-        {"error", _toolbarErrors.value("hotspot")}, {"operation", operationState("companion")}};
+        {"error", _toolbarErrors.value("hotspot")}, {"operation", operationState("companion")},
+        {"locked", configLocked()}, {"lockReason", lockReason(configLocked())}, {"unsaved", _unsaved.value("hotspot")}};
 }
 
 namespace {
@@ -777,12 +856,12 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
 {
     if (_paramService->isLoading() || _toolbarOperation || !companionState().value("connected").toBool() ||
         _sourceComponentId != kCompanionCompId || (_activeVehicle && _activeVehicle->id() != _sourceSystemId) ||
-        (!streamGroup(group) && _activeVehicle && _activeVehicle->armed())) return false;
+        (!streamGroup(group) && configLocked())) return false;
     if (subsystem == 1) {
         for (const auto& item : serialLinks()) {
             const auto link = item.toMap();
-            if (link.value("index").toInt() >= 2) continue; // Schema exposes only the two configurable links.
             const auto prefix = QString("CC_L%1_").arg(link.value("index").toInt());
+            if (!_paramService->allFactNames().contains(prefix + "PORT")) continue; // the CC has no parameters for this link
             for (const auto &field : {QPair<QString, QString>{"BAUD", "baudrate"}, {"PORT", "port"}}) {
                 const auto configured = _paramService->confirmedValue(prefix + field.first);
                 if (!link.value("fresh").toBool() || !configured.isValid() || configured.toString() != link.value(field.second).toString()) {
@@ -806,7 +885,7 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
         }
     }
     ToolbarOperation op;
-    op.group = group; op.subsystem = subsystem; op.epoch = _ccSessionEpoch;
+    op.group = group; op.subsystem = subsystem; op.epoch = _ccSessionEpoch; op.systemId = _sourceSystemId;
     for (const auto &entry : values) op.effectCandidate[entry.first] = entry.second;
     QMap<QString, QVariant> anticipated;
     for (const auto& entry : values) {
@@ -839,6 +918,7 @@ void CompanionController::advanceToolbarOperation()
         op.awaiting = entry.first;
         op.sawInProgress = false;
         op.inProgressAcks = 0;
+        op.lastText.clear(); // the CC's refusal reason for this SET comes after it
         const bool secret = _paramService->isSecret(entry.first);
         addOperationStep("tx", QStringLiteral("%1PARAM_EXT_SET %2=%3").arg(op.rollingBack ? QStringLiteral("(rollback) ") : QString(), entry.first,
                          secret ? QStringLiteral("<hidden>") : entry.second.toString()), "waiting");
@@ -880,18 +960,18 @@ void CompanionController::toolbarParameterSaved(const QString& name, bool succes
     if (!success || !matches) {
         settleWaitingSteps("error");
         addOperationStep("rx", success ? QStringLiteral("ACK khác giá trị đã gửi") : QStringLiteral("ACK FAILED"), "error");
-        // Cancel only this session's successful stage writes, in ACK order.
-        if (op.subsystem && !op.waitingCommand && !op.rollingBack && _activeVehicle && !_activeVehicle->armed()) {
+        // The CC names the reason in a "<Group>: " line right before its FAILED.
+        const QString reason = !op.lastText.isEmpty() ? op.lastText : tr("CC từ chối (không có lý do)");
+        // Cancel only this session's successful stage writes, in ACK order (nothing is applied yet).
+        if (op.subsystem && !op.waitingCommand && !op.rollingBack && !configLocked()) {
             QList<QPair<QString, QVariant>> rollback;
             for (int i = op.next - 2; i >= 0; --i) rollback.append({op.values[i].first, op.previous.value(op.values[i].first)});
             if (!rollback.isEmpty()) {
-                op.values = rollback; op.next = 0; op.rollingBack = true; op.rollbackError = "Stage rejected";
+                op.values = rollback; op.next = 0; op.rollingBack = true; op.rollbackError = reason;
                 advanceToolbarOperation(); return;
             }
         }
-        // The CC names the reason in a "Camera: "/"Vision: " line before its FAILED.
-        finishToolbarOperation(streamGroup(op.group) && !op.lastText.isEmpty() ? op.lastText
-                                                                                : QStringLiteral("Configuration rejected; refresh before retrying"));
+        finishToolbarOperation(reason);
         return;
     }
     settleWaitingSteps("done");
@@ -922,8 +1002,11 @@ void CompanionController::finishToolbarOperation(const QString& error)
     _setAckTimer->stop();
     _toolbarOperationTimer->stop();
     settleWaitingSteps(error.isEmpty() ? "done" : "error");
+    // Links/hotspot are not autosaved any more (camera/Vision are): SAVE only after a confirmed APPLY (spec §7).
+    const bool applied = op.command == MAV_CMD_THACO_APPLY_CONFIG;
+    if (applied) _unsaved[group] = error.isEmpty();
     if (error.isEmpty()) {
-        addOperationStep("info", op.notSaved ? tr("Chưa lưu được") : tr("Đã lưu"), op.notSaved ? "error" : "done");
+        addOperationStep("info", applied ? tr("Đã áp dụng, chưa lưu — reboot sẽ về cấu hình cũ") : tr("Đã lưu"), "done");
         op.progress = 1.0;
     } else {
         addOperationStep("info", error, "error");
@@ -1008,6 +1091,11 @@ void CompanionController::onApplyResult(uint8_t result, bool noResponse)
     }
     settleWaitingSteps("done");
     addOperationStep("rx", QStringLiteral("ACK ACCEPTED"), "done");
+    if (op.command == MAV_CMD_THACO_SAVE_DEFAULT_CONFIG) {
+        _unsaved[op.group] = false;
+        finishToolbarOperation();
+        return;
+    }
     op.waitingEffect = true;
     checkToolbarEffect();
 }
@@ -1142,15 +1230,14 @@ void CompanionController::cancelStreamOperation()
 
 bool CompanionController::setLinkConfig(int index, const QString& port, int baud)
 {
-    if (index < 0 || index > 1) return false;
     QVariantMap self, other;
     for (const auto& v : serialLinks()) {
         const auto link = v.toMap();
         if (link.value("index").toInt() == index) self = link;
-        else if (link.value("index").toInt() == 1 - index) other = link;
+        else if (!port.isEmpty() && link.value("port").toString() == port) other = link; // "" = off, shared by any number
     }
-    if (!self.value("fresh").toBool()) return false;
-    if (!other.isEmpty() && other.value("port").toString() == port) {
+    if (!self.value("fresh").toBool()) return false; // also an index the CC does not report
+    if (!other.isEmpty()) {
         _toolbarErrors["links"] = tr("Cổng đang được dùng bởi %1").arg(other.value("name").toString());
         emit toolbarStateChanged();
         return false;
@@ -1222,6 +1309,7 @@ void CompanionController::endUnconfirmed(const QString& note)
 {
     if (!_toolbarOperation) return;
     const auto group = _toolbarOperation->group;
+    if (_toolbarOperation->command == MAV_CMD_THACO_APPLY_CONFIG) _unsaved[group] = false;
     _setAckTimer->stop();
     _toolbarOperationTimer->stop();
     if (!note.isEmpty()) {
@@ -1240,7 +1328,7 @@ void CompanionController::failOperationByTimeout(const QString& reason)
     auto &op = *_toolbarOperation;
     _setAckTimer->stop();
     settleWaitingSteps("error");
-    if (op.subsystem && !op.waitingCommand && !op.rollingBack && _activeVehicle && !_activeVehicle->armed()) {
+    if (op.subsystem && !op.waitingCommand && !op.rollingBack && !configLocked()) {
         QList<QPair<QString, QVariant>> rollback;
         // Include the last sent stage: its effect is uncertain when its ACK was lost.
         for (int i = op.next - 1; i >= 0; --i) rollback.append({op.values[i].first, op.previous.value(op.values[i].first)});

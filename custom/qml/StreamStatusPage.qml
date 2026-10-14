@@ -16,15 +16,15 @@ ToolIndicatorPage {
     readonly property var vis: CompanionController.visionStreamState || ({})
     readonly property var current: cam.current || ({})
     readonly property var visionCurrent: vis.current || ({})
-    readonly property var reason: cam.reason || ({code: 1, text: ""})
-    readonly property var visionReason: vis.reason || ({code: 1, text: ""})
+    readonly property var reason: cam.reason || ({code: 2, text: ""})
+    readonly property var visionReason: vis.reason || ({code: 2, text: ""})
     readonly property int mode: modeState.mode !== undefined ? modeState.mode : -1
     property bool readbackRequested: false
     property string localError: ""
     readonly property string title: qsTr("Vehicle Stream Status")
     readonly property bool linkUp: !!activeVehicle && !activeVehicle.vehicleLinkManager.communicationLost
     // Reasons 1-7: nothing to configure yet (no vehicle, link, node or readback); 9: another operation is running.
-    readonly property bool hideControls: reason.code >= 1 && reason.code <= 7
+    readonly property bool hideControls: reason.code >= 2 && reason.code <= 7
     readonly property bool editable: reason.code === 0 && linkUp && !modeState.pending
     readonly property bool visionEditable: editable && visionReason.code === 0
     showExpand: true

@@ -18,6 +18,18 @@ private slots:
     void _testFirstCompanionLocksWithoutVehicle();
     void _testFailedSendEndsOperationAtOnce();
     void _testCompanionAckRestartsWatchdog();
+    void _testLockFromCompanionBitWithoutVehicle();
+    void _testRefusalShowsCompanionReason();
+    void _testApplyWaitsThroughHeartbeatLossThenReadsBack();
+    void _testApplyWaitReadbackMismatchFails();
+    void _testCancelCompanionWait();
+    void _testNonApplyOpEndsOnHeartbeatLoss();
+    void _testApplyLeavesUnsavedUntilSave();
+    void _testThirdLinkIsConfigurable();
+    void _testStreamModeWithoutVehicle();
+    void _testStageRollbackWithoutVehicle();
+    void _testTelemetryTimeoutKeepsApplyWait();
+    void _testReadbackSkipsSecret();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -56,4 +68,6 @@ private slots:
     void _testOtherSystemCompanionGetsNoConfig();
     void _testOtherVehicleResetsCompanionLock();
     void _testReplaceNotSentKeepsOldOp();
+    void _testApplyWaitAcrossVehicleLoss();
+    void _testUnsavedClearedWhenCompanionLockResets();
 };

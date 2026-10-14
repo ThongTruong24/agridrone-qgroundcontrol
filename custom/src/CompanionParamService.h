@@ -93,6 +93,8 @@ public:
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
     bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
     QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
+    /// confirmedValue() is invalid again until the CC reports the parameter anew.
+    void forgetConfirmed(const QString& name) { _isLiveSynced[name] = false; }
 
 
 signals:

@@ -29,7 +29,7 @@ Item {
     // No telemetry at all (vehicle, Companion link or the node itself) is different from a device reporting itself off.
     readonly property var reason: control.section === "camera" ? CompanionController.cameraStreamState.reason : null
     readonly property bool noData: control.section === "companion" ? !control.connected
-                                 : !!(control.reason && control.reason.code >= 1 && control.reason.code <= 5)
+                                 : !!(control.reason && control.reason.code >= 2 && control.reason.code <= 5)
 
 
     MouseArea {

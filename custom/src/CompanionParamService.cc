@@ -9,6 +9,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonArray>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QDateTime>
 #include <QtCore/QTextStream>
 #include <cstring>
@@ -436,18 +437,25 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
 
         // Dynamically add param if missing from template
         if (!_meta.contains(paramId)) {
+            // Every link the CC reports shares link 0's schema: the link count comes from the CC (spec §6).
+            static const QRegularExpression linkParam(QStringLiteral("^CC_L\\d+_"));
+            const QString linkTemplate = QString(paramId).replace(linkParam, QStringLiteral("CC_L0_"));
             CCParamMeta dynMeta;
+            if (linkTemplate != paramId && _meta.contains(linkTemplate)) {
+                dynMeta = _meta.value(linkTemplate);
+            } else {
+                dynMeta.group = "Other";
+                dynMeta.type = pval.param_type;
+                dynMeta.readOnly = true;
+                dynMeta.applyMode = "boot_only";
+            }
             dynMeta.name = paramId;
             dynMeta.label = paramId;
-            dynMeta.group = "Other";
-            dynMeta.type = pval.param_type;
             dynMeta.defaultValue = val;
-            dynMeta.readOnly = true;
-            dynMeta.applyMode = "boot_only";
             _order.append(paramId);
             _meta[paramId] = dynMeta;
-            if (!_groups.contains("Other")) {
-                _groups.append("Other");
+            if (!_groups.contains(dynMeta.group)) {
+                _groups.append(dynMeta.group);
                 emit groupsChanged();
             }
         }

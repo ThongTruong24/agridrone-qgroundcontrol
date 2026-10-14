@@ -315,9 +315,15 @@ public:
     Q_INVOKABLE bool setStreamParameter(const QString& stream, const QString& id, const QVariant& value);
     /// Why the popup of this stream cannot be used: {code, text}; code 0 = usable (see the table in the Fly View spec).
     QVariantMap streamReason(const QString& stream) const;
-    /// Port device and baud of a UART (index 0 or 1) in one operation; a device already used by the other link is refused.
+    /// Port device and baud of any UART the CC reports, in one operation; a device already used by another link is refused.
     Q_INVOKABLE bool setLinkConfig(int index, const QString& port, int baud);
     Q_INVOKABLE bool applyHotspot(const QVariantMap& draft);
+    /// MAV_CMD_THACO_SAVE_DEFAULT_CONFIG for "links" (1) or "hotspot" (3): only after a confirmed APPLY of that group.
+    Q_INVOKABLE bool saveCompanionGroup(const QString& group);
+    /// Ends a links/hotspot APPLY that waits for the CC to come back, as unconfirmed.
+    Q_INVOKABLE void cancelCompanionWait();
+    /// Links/hotspot writes are locked: the CC reports CC_SYS_STATUS_CONFIG_LOCKED, or the active Vehicle is armed (spec §7).
+    bool configLocked() const;
     /// Steps and progress of the operation a popup started: {active, progress 0..1, steps[{direction, text, state, elapsedMs}], error, outcome}.
     /// It stays available after the operation ends, until the next one starts. origin: "stream" (camera and Vision) or "companion".
     Q_INVOKABLE QVariantMap operationState(const QString& origin) const;
@@ -381,6 +387,8 @@ private:
     void _clearTelemetryState();
     CompanionTransport transport();
     void onCompanionLost();
+    void onCompanionSessionStarted();
+    void checkReadbackAfterReconnect();
 
     QVariantMap streamState(const QString& stream) const;
     bool beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem = 0,
@@ -433,18 +441,22 @@ private:
         bool resultSeen{false};
         bool gapTolerant{false};         // the CC reported a stage after which it drops the link (router/AP restart)
         bool unconfirmedOnTimeout{false};
-        bool notSaved{false};
         int lastApplyProgress{-1};
         QString lastText;                // last STATUSTEXT of the operation's group
         QMap<QString, QVariant> effectCandidate;
         int epoch{0};
         uint16_t command{0};             // the COMMAND_LONG awaiting the CC's COMMAND_ACK
+        int systemId{-1};                // the CC it was sent to
+        bool waitingReconnect{false};    // a links/hotspot APPLY lost the CC: no deadline, read back when it returns
+        bool readbackRequested{false};
     };
     std::optional<ToolbarOperation> _toolbarOperation;
     QTimer* _toolbarOperationTimer{nullptr};
     QTimer* _setAckTimer{nullptr};
     QMap<QString, QVariantMap> _lastOperation;
     QMap<QString, QString> _toolbarErrors;
+    QMap<QString, bool> _unsaved;    // links/hotspot: the last APPLY was confirmed and not saved yet
+    uint8_t _systemStatus{0};        // CC_TELEMETRY_SYSTEM.system_status (CC_SYS_STATUS bits)
 
     // SOLID Services
     CompanionLinksService* _linksService = nullptr;
