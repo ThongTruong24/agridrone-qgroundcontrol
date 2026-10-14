@@ -14,6 +14,8 @@ This file adds what is specific to this fork: the THACO **AgriDrone** custom bui
 ```bash
 cmake --build build --config Debug --parallel                                       # incremental build
 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe ./build/Debug/QGroundControl        # run (software GL under WSL)
+# Do not judge video quality in the WSL build: WSL2's monotonic clock runs ~7% slow (2026-10-14), so the clock-synced
+# sink falls behind and rtspsrc drop-on-latency drops packets -> macroblocking/lag. Use native Windows QGC, VLC or the SIYI handheld.
 
 ctest --test-dir build -R CompanionControllerTest --output-on-failure               # one test via CTest
 ./build/Debug/QGroundControl --unittest:CompanionControllerTest                     # one test via the binary
