@@ -82,6 +82,7 @@ public:
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
     QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
 
+    bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
     bool exportParameters(const QString& filePath);
     bool importParameters(const QString& filePath);
 
@@ -91,6 +92,7 @@ signals:
     void modifiedCountChanged();
     void groupsChanged();
     void parameterSaved(const QString& name, bool success, const QString& message);
+    void parameterAckInProgress(const QString& name);
     void logMessage(const QString& category, const QString& direction, const QString& message, int severity);
 
 private slots:

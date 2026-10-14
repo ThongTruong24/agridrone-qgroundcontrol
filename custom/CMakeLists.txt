@@ -17,33 +17,18 @@ qt_add_library(AgriDroneModule STATIC)
 set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionDropPanel.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CameraStatusIndicator.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/VisionStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamStatusPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamModeSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionToggleSwitch.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOperationLog.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionSettings.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionLogPanel.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionActionBar.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionConfigPanel.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionConfigRow.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOverviewTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionTelemetryTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionNetworkingTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionCameraTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionVisionTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionMissionTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionParametersTab.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionParamActions.qml
 )
 
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionUiAdapter.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qgc_set_qt_resource_alias(${AGRIDRONE_QML_FILES})
 
 qt_add_qml_module(AgriDroneModule
@@ -136,14 +121,14 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ITelemetryHandler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.cc

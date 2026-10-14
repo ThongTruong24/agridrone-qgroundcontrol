@@ -28,6 +28,7 @@ class CompanionController : public QObject
     Q_OBJECT
     Q_PROPERTY(QVariantMap cameraStreamState READ cameraStreamState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap visionStreamState READ visionStreamState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap streamModeState READ streamModeState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap hotspotState READ hotspotState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantList serialLinks READ serialLinks NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap companionState READ companionState NOTIFY toolbarStateChanged)
@@ -43,6 +44,9 @@ class CompanionController : public QObject
         bool boundingBoxEnabled READ boundingBoxEnabled WRITE setBoundingBoxEnabled NOTIFY aiVisionControlChanged)
     Q_PROPERTY(bool trackingEnabled READ trackingEnabled WRITE setTrackingEnabled NOTIFY aiVisionControlChanged)
     Q_PROPERTY(bool followingEnabled READ followingEnabled WRITE setFollowingEnabled NOTIFY aiVisionControlChanged)
+    Q_PROPERTY(bool hasMissionTelemetry READ hasMissionTelemetry NOTIFY missionChanged)
+    Q_PROPERTY(quint32 lastTriggerId READ lastTriggerId NOTIFY missionChanged)
+    Q_PROPERTY(quint32 lastTriggerTimeBootMs READ lastTriggerTimeBootMs NOTIFY missionChanged)
     Q_PROPERTY(bool configAvailable READ configAvailable NOTIFY configStatusChanged)
     Q_PROPERTY(QString configState READ configState NOTIFY configStatusChanged)
     Q_PROPERTY(int configProgress READ configProgress NOTIFY configStatusChanged)
@@ -52,13 +56,7 @@ class CompanionController : public QObject
     Q_PROPERTY(bool vehicleConnected READ vehicleConnected NOTIFY vehicleConnectedChanged)
 
     // Extended Parameters (CompID 191)
-    Q_PROPERTY(QVariantList ccParameters READ ccParameters NOTIFY ccParametersChanged)
     Q_PROPERTY(bool ccParametersLoading READ ccParametersLoading NOTIFY ccParametersLoadingChanged)
-    Q_PROPERTY(int ccModifiedParamCount READ ccModifiedParamCount NOTIFY ccModifiedParamCountChanged)
-    Q_PROPERTY(QStringList ccParameterGroups READ ccParameterGroups NOTIFY ccParameterGroupsChanged)
-    // Step-by-step result of the Parameters editor "Apply": state is idle | running | success | failed.
-    Q_PROPERTY(QStringList editorApplyLog READ editorApplyLog NOTIFY editorApplyChanged)
-    Q_PROPERTY(QString editorApplyState READ editorApplyState NOTIFY editorApplyChanged)
 
     // Telemetry Received Flags
     Q_PROPERTY(bool hasCameraTelemetry READ hasCameraTelemetry NOTIFY cameraChanged)
@@ -66,7 +64,6 @@ class CompanionController : public QObject
     Q_PROPERTY(bool hasNetworkTelemetry READ hasNetworkTelemetry NOTIFY networkChanged)
     Q_PROPERTY(bool hasLinksTelemetry READ hasLinksTelemetry NOTIFY linksChanged)
     Q_PROPERTY(bool hasSystemTelemetry READ hasSystemTelemetry NOTIFY systemChanged)
-    Q_PROPERTY(bool hasMissionTelemetry READ hasMissionTelemetry NOTIFY missionChanged)
 
     // Camera Properties (from CC_TELEMETRY_CAMERA 42011)
     Q_PROPERTY(int camStatus READ camStatus NOTIFY cameraChanged)
@@ -134,10 +131,6 @@ class CompanionController : public QObject
     Q_PROPERTY(quint32 uap0TxKb READ uap0TxKb NOTIFY networkChanged)
     Q_PROPERTY(int dnsmasqStatus READ dnsmasqStatus NOTIFY networkChanged)
 
-    // Mission Properties (from THACO_EXTERNAL_XYZ_TRIGGER 32000)
-    Q_PROPERTY(quint32 lastTriggerId READ lastTriggerId NOTIFY missionChanged)
-    Q_PROPERTY(quint32 lastTriggerTimeBootMs READ lastTriggerTimeBootMs NOTIFY missionChanged)
-
     // Links Properties (delegated to CompanionLinksService)
     Q_PROPERTY(int fcBaud READ fcBaud NOTIFY linksChanged)
     Q_PROPERTY(int siyiBaud READ siyiBaud NOTIFY linksChanged)
@@ -175,10 +168,8 @@ class CompanionController : public QObject
     // Transport Protocol & Dynamic Ports from CC
     Q_PROPERTY(QString transportProtocol READ transportProtocol NOTIFY linksChanged)
     Q_PROPERTY(QStringList availablePorts READ availablePorts NOTIFY availablePortsChanged)
-    Q_PROPERTY(QString configStatus READ configStatus NOTIFY configStatusChanged)
     Q_PROPERTY(int vehicleEpoch READ vehicleEpoch NOTIFY vehicleEpochChanged)
     Q_PROPERTY(bool vehicleAvailable READ vehicleAvailable NOTIFY vehicleAvailableChanged)
-    Q_PROPERTY(QString configMessage READ configMessage NOTIFY configStatusChanged)
 
     // System Properties (from CC_TELEMETRY_SYSTEM 42014)
     Q_PROPERTY(int cpuUsage READ cpuUsage NOTIFY systemChanged)
@@ -199,206 +190,260 @@ public:
 
     // Telemetry Received Flags Getters
     bool hasCameraTelemetry() const { return _hasCameraTelemetry; }
+
     bool hasVisionTelemetry() const { return _hasVisionTelemetry; }
+
     bool hasNetworkTelemetry() const { return _hasNetworkTelemetry; }
+
     bool hasLinksTelemetry() const { return _linksService ? _linksService->hasLinksTelemetry() : false; }
+
     bool hasSystemTelemetry() const { return _hasSystemTelemetry; }
-    bool hasMissionTelemetry() const { return _hasMissionTelemetry; }
 
     // Camera Getters
     int camStatus() const { return _camStatus; }
+
     QString camName() const { return _camName; }
+
     QString cameraType() const { return _cameraType; }
+
     QString connectionPort() const { return _connectionPort; }
+
     QString serialNumber() const { return _serialNumber; }
+
     int videoWidth() const { return _videoWidth; }
+
     int videoHeight() const { return _videoHeight; }
+
     int videoFps() const { return _videoFps; }
+
     int depthWidth() const { return _depthWidth; }
+
     int depthHeight() const { return _depthHeight; }
+
     int depthFps() const { return _depthFps; }
+
     int bitrateKbps() const { return _bitrateKbps; }
+
     int bitrateMaxKbps() const { return _bitrateMaxKbps; }
+
     int vbvBufferKb() const { return _vbvBufferKb; }
+
     int rotation() const { return _rotation; }
+
     int rtspPort() const { return _rtspPort; }
+
     QString rtspUrlQgc() const { return _rtspUrlQgc; }
+
     QString rtspUrlController() const { return _rtspUrlController; }
+
     QString rtspUrlLaptop() const { return _rtspUrlLaptop; }
+
     QString codec() const { return _codec; }
+
     QString encoderMode() const { return _encoderMode; }
+
     bool isDefaultCam() const { return _isDefaultCam; }
+
     int profileMode() const { return _profileMode; }
+
     int enableEmitter() const { return _enableEmitter; }
+
     int cameraStatus() const { return _cameraStatus; }
+
     int errorCode() const { return _errorCode; }
+
     int usbSpeedMode() const { return _usbSpeedMode; }
 
     // Vision Getters
     float confidenceThresh() const { return _confidenceThresh; }
+
     float inferenceFps() const { return _inferenceFps; }
+
     int visionInputWidth() const { return _visionInputWidth; }
+
     int visionInputHeight() const { return _visionInputHeight; }
+
     int visionVideoFps() const { return _visionVideoFps; }
+
     int detectionsCount() const { return _detectionsCount; }
+
     int visionStatusFlags() const { return _visionStatusFlags; }
+
     QString modelName() const { return _modelName; }
+
     QString inputSource() const { return _inputSource; }
 
     // Network Getters
     QString eth0Ip() const { return _eth0Ip; }
+
     QString eth0Netmask() const { return _eth0Netmask; }
+
     int eth0Status() const { return _eth0Status; }
+
     int eth0IsStatic() const { return _eth0IsStatic; }
+
     quint32 eth0RxKb() const { return _eth0RxKb; }
+
     quint32 eth0TxKb() const { return _eth0TxKb; }
+
     QString wlan0Ip() const { return _wlan0Ip; }
+
     QString wlan0Netmask() const { return _wlan0Netmask; }
+
     int wlan0Status() const { return _wlan0Status; }
+
     QString wlan0Ssid() const { return _wlan0Ssid; }
+
     int wlan0Rssi() const { return _wlan0Rssi; }
+
     int wlan0Dhcp() const { return _wlan0Dhcp; }
+
     quint32 wlan0RxKb() const { return _wlan0RxKb; }
+
     quint32 wlan0TxKb() const { return _wlan0TxKb; }
+
     QString apIp() const { return _apIp; }
+
     QString apNetmask() const { return _apNetmask; }
+
     QString apSsid() const { return _apSsid; }
+
     int apChannel() const { return _apChannel; }
+
     int apClientCount() const { return _apClientCount; }
+
     int apStatus() const { return _apStatus; }
+
     QString apHwMode() const { return _apHwMode; }
+
     quint32 uap0RxKb() const { return _uap0RxKb; }
+
     quint32 uap0TxKb() const { return _uap0TxKb; }
+
     int dnsmasqStatus() const { return _dnsmasqStatus; }
 
-    // Mission Getters
-    quint32 lastTriggerId() const { return _lastTriggerId; }
-    quint32 lastTriggerTimeBootMs() const { return _lastTriggerTimeBootMs; }
-
     // Extended Parameters Getters
-    QVariantList ccParameters() const { return _paramService ? _paramService->paramList() : QVariantList(); }
     bool ccParametersLoading() const { return _paramService ? _paramService->isLoading() : false; }
-    int ccModifiedParamCount() const { return _paramService ? _paramService->modifiedCount() : 0; }
-    QStringList ccParameterGroups() const { return _paramService ? _paramService->groups() : QStringList(); }
 
     // Links Getters (delegated to CompanionLinksService)
     int fcBaud() const { return _linksService ? _linksService->fcBaud() : 0; }
+
     int siyiBaud() const { return _linksService ? _linksService->siyiBaud() : 0; }
+
     QString fcPort() const { return _linksService ? _linksService->fcPort() : QString(); }
+
     QString siyiPort() const { return _linksService ? _linksService->siyiPort() : QString(); }
+
     int fcStatus() const { return _linksService ? _linksService->fcStatus() : 0; }
+
     int siyiStatus() const { return _linksService ? _linksService->siyiStatus() : 0; }
+
     float fcBitrateKbps() const { return _linksService ? _linksService->fcBitrateKbps() : 0.0f; }
+
     float fcPacketDropRate() const { return _linksService ? _linksService->fcPacketDropRate() : 0.0f; }
+
     float siyiBitrateKbps() const { return _linksService ? _linksService->siyiBitrateKbps() : 0.0f; }
+
     float siyiPacketDropRate() const { return _linksService ? _linksService->siyiPacketDropRate() : 0.0f; }
+
     quint32 fcBytesRx() const { return _linksService ? _linksService->fcBytesRx() : 0; }
+
     quint32 fcBytesTx() const { return _linksService ? _linksService->fcBytesTx() : 0; }
+
     quint32 siyiBytesRx() const { return _linksService ? _linksService->siyiBytesRx() : 0; }
+
     quint32 siyiBytesTx() const { return _linksService ? _linksService->siyiBytesTx() : 0; }
+
     int siyiLinkQuality() const { return _linksService ? _linksService->siyiLinkQuality() : 0; }
+
     int linkStatusFlags() const { return _linksService ? _linksService->linkStatusFlags() : 0; }
 
     float fcTxRate() const { return _linksService ? _linksService->fcTxRate() : 0.0f; }
+
     float fcRxRate() const { return _linksService ? _linksService->fcRxRate() : 0.0f; }
+
     float fcTxRateMax() const { return _linksService ? _linksService->fcTxRateMax() : 0.0f; }
+
     float fcTxRateMulti() const { return _linksService ? _linksService->fcTxRateMulti() : 0.0f; }
+
     float fcRxLoss() const { return _linksService ? _linksService->fcRxLoss() : 0.0f; }
+
     quint32 fcTxErr() const { return _linksService ? _linksService->fcTxErr() : 0; }
 
     float siyiTxRate() const { return _linksService ? _linksService->siyiTxRate() : 0.0f; }
+
     float siyiRxRate() const { return _linksService ? _linksService->siyiRxRate() : 0.0f; }
+
     float siyiTxRateMax() const { return _linksService ? _linksService->siyiTxRateMax() : 0.0f; }
+
     float siyiTxRateMulti() const { return _linksService ? _linksService->siyiTxRateMulti() : 0.0f; }
+
     float siyiRxLoss() const { return _linksService ? _linksService->siyiRxLoss() : 0.0f; }
+
     quint32 siyiTxErr() const { return _linksService ? _linksService->siyiTxErr() : 0; }
 
-    QString transportProtocol() const { return _linksService ? _linksService->transportProtocol() : QStringLiteral("Serial / UART"); }
+    QString transportProtocol() const
+    {
+        return _linksService ? _linksService->transportProtocol() : QStringLiteral("Serial / UART");
+    }
+
     QStringList availablePorts() const { return _linksService ? _linksService->availablePorts() : QStringList(); }
-    QString configStatus() const { return _configStatus; }
 
     // System Getters
     int cpuUsage() const { return _cpuUsage; }
+
     int ramUsage() const { return _ramUsage; }
+
     int diskUsage() const { return _diskUsage; }
+
     int cpuTemp() const { return _cpuTemp; }
+
     quint32 uptimeS() const { return _uptimeS; }
 
     // Toast Getters
     QString lastToastMsg() const { return _lastToastMsg; }
+
     bool lastToastIsError() const { return _lastToastIsError; }
 
-    // Q_INVOKABLE Actions for QML
-    Q_INVOKABLE void sendCameraConfig(int width, int height, int fps, int bitrateKbps, int rotation, const QString& codec);
-    Q_INVOKABLE void sendVisionConfig(float confidenceThresh, const QString& modelName, const QString& inputSource);
-    Q_INVOKABLE void sendNetworkConfig(int apChannel, const QString& apSsid, const QString& apPsk, const QString& eth0Ip);
-    Q_INVOKABLE void sendLinksConfig(int fcBaud, int siyiBaud, const QString& fcPort, const QString& siyiPort);
-    Q_INVOKABLE void setTelemetryLinks(const QString& fcPort, int fcBaud, const QString& siyiPort, int siyiBaud) {
-        sendLinksConfig(fcBaud, siyiBaud, fcPort, siyiPort);
-    }
-    Q_INVOKABLE void applyFcLink(const QString& fcPort, int fcBaud);
-    Q_INVOKABLE void applySiyiLink(const QString& siyiPort, int siyiBaud);
-
-    // MAV_CMD Staging & Execution
-    Q_INVOKABLE void applyConfig(int subsystemId = 0, bool restartImmediate = true, const QString& originCategory = "");
-    Q_INVOKABLE void saveDefaultConfig(int subsystemId = 0);
-    Q_INVOKABLE void restoreDefaultConfig(int subsystemId = 0);
-    Q_INVOKABLE void sendCliCommand(const QString& cmdText);
-
     // Extended Parameters QML Invokables
-    Q_INVOKABLE void requestCcParameters() {
-        if (_paramService) _paramService->requestParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
+    Q_INVOKABLE void requestCcParameters()
+    {
+        if (_paramService)
+            _paramService->requestParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
     }
-    Q_INVOKABLE void stageCcParameter(const QString& name, const QVariant& value) {
-        if (_paramService) _paramService->stageParameter(name, value);
-    }
-    Q_INVOKABLE void resetCcParameter(const QString& name) {
-        if (_paramService) _paramService->resetParameter(name);
-    }
-    Q_INVOKABLE void resetCcParameterToDefault(const QString& name) {
-        if (_paramService) _paramService->resetToDefault(name);
-    }
-    Q_INVOKABLE bool exportCcParameters(const QString& filePath) {
-        return _paramService ? _paramService->exportParameters(filePath) : false;
-    }
-    Q_INVOKABLE bool importCcParameters(const QString& filePath) {
-        return _paramService ? _paramService->importParameters(filePath) : false;
-    }
-    Q_INVOKABLE void resetAllModifiedCcParameters() {
-        if (_paramService) _paramService->resetAllModified();
-    }
-    /// Parameters editor "Apply": sends every modified parameter, then APPLY for the staged subsystems (links/hotspot)
-    /// once the CC has ACKed all of them. Nothing is applied if the CC rejects or does not answer any write.
-    Q_INVOKABLE void applyModifiedCcParameters();
-    Q_INVOKABLE void dismissEditorApply();
-    QStringList editorApplyLog() const { return _editorApplyLog; }
-    QString editorApplyState() const { return _editorApplyState; }
-    Q_INVOKABLE void saveModifiedCcParameters() {
-        if (_paramService) _paramService->saveModifiedParameters(_activeVehicle ? _activeVehicle.data() : nullptr);
-    }
-    Q_INVOKABLE void setSingleCcParameter(const QString& name, const QVariant& value) {
-        if (_paramService) _paramService->sendSingleParamSet(_activeVehicle ? _activeVehicle.data() : nullptr, name, value);
-    }
-
-    // Audit Log (delegated to CompanionLogService)
-    Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;
-    Q_INVOKABLE void clearLogHistory(const QString& category = QString());
 
     QVariantMap cameraStreamState() const { return streamState("camera"); }
+
     QVariantMap visionStreamState() const { return streamState("vision"); }
+
     QVariantMap hotspotState() const;
     QVariantMap companionState() const;
-    QVariantList serialLinks() const { return _linksService->serialLinks(); }
-    Q_INVOKABLE bool setStreamParameter(const QString& stream, const QString& id, const QVariant& value);
-    Q_INVOKABLE bool setStreamEnabled(const QString& stream, bool enabled);
-    Q_INVOKABLE bool connectStream(const QString& stream, const QString& url);
-    Q_INVOKABLE bool disconnectStream(const QString& stream);
-    Q_INVOKABLE bool setLinkBaud(int index, int baud);
-    Q_INVOKABLE bool applyHotspot(const QVariantMap& draft);
 
-    // Test-time introspection helpers (available in all builds via friendship)
-    bool vehicleAvailable() const { return _activeVehicle != nullptr; }
-    int vehicleEpoch() const { return _vehicleEpoch; }
+    QVariantList serialLinks() const { return _linksService->serialLinks(); }
+
+    /// The single stream mode, CC_STREAM_MODE: 0 Off, 1 Video, 2 Vision. A new mode while a mode operation is pending
+    /// replaces it (the CC cancels the old one). Camera/Vision writes are allowed while armed.
+    Q_INVOKABLE bool setStreamMode(int mode);
+    /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way.
+    Q_INVOKABLE void cancelStreamOperation();
+    /// {mode (confirmed, -1 unknown), pendingMode, modeOperation, pending, operation, reason, visionFresh,
+    ///  blocked (why a mode SET would be refused now; empty = allowed)}
+    QVariantMap streamModeState() const;
+    Q_INVOKABLE bool setStreamParameter(const QString& stream, const QString& id, const QVariant& value);
+    /// Why the popup of this stream cannot be used: {code, text}; code 0 = usable (see the table in the Fly View spec).
+    QVariantMap streamReason(const QString& stream) const;
+    /// Port device and baud of a UART (index 0 or 1) in one operation; a device already used by the other link is
+    /// refused.
+    Q_INVOKABLE bool setLinkConfig(int index, const QString& port, int baud);
+    Q_INVOKABLE bool applyHotspot(const QVariantMap& draft);
+    /// Steps and progress of the operation a popup started: {active, progress 0..1, steps[{direction, text, state,
+    /// elapsedMs}], error, outcome}. It stays available after the operation ends, until the next one starts. origin:
+    /// "stream" (camera and Vision) or "companion".
+    Q_INVOKABLE QVariantMap operationState(const QString& origin) const;
+
+    // Called by the MAV command queue for the APPLY_CONFIG this controller sent (see advanceToolbarOperation).
+    void onApplyProgress(uint8_t progress);
+    void onApplyResult(uint8_t result, int failureCode);
 
     bool boundingBoxEnabled() const { return _boundingBoxEnabled; }
 
@@ -410,6 +455,17 @@ public:
     void setTrackingEnabled(bool enabled);
     void setFollowingEnabled(bool enabled);
     Q_INVOKABLE bool sendAiVisionTrackPoint(double normalizedX, double normalizedY, double normalizedRadius);
+    Q_INVOKABLE QVariantList getLogHistory(const QString& category = QString()) const;
+    Q_INVOKABLE void clearLogHistory(const QString& category = QString());
+    Q_INVOKABLE bool logMatchesFilter(const QString& prefix, const QString& category, const QString& text) const;
+
+    bool hasMissionTelemetry() const { return _hasMissionTelemetry; }
+
+    bool missionReceived() const { return _hasMissionTelemetry; }
+
+    quint32 lastTriggerId() const { return _lastTriggerId; }
+
+    quint32 lastTriggerTimeBootMs() const { return _lastTriggerTimeBootMs; }
 
     bool configAvailable() const { return _configService->available(); }
 
@@ -419,16 +475,26 @@ public:
 
     int configErrorCode() const { return _configService->errorCode(); }
 
-    bool linksReceived()    const { return _linksService ? _linksService->hasLinksTelemetry() : false; }
-    bool linksStale()       const { return _linksStale; }
-    bool cameraReceived()   const { return _hasCameraTelemetry; }
-    bool networkReceived()  const { return _hasNetworkTelemetry; }
-    bool visionReceived()   const { return _hasVisionTelemetry; }
-    bool systemReceived()   const { return _hasSystemTelemetry; }
-    bool missionReceived()  const { return _hasMissionTelemetry; }
-    int  sourceSystemId()   const { return _sourceSystemId; }
-    int  sourceComponentId()const { return _sourceComponentId; }
-    QString configMessage() const { return _configMessage; }
+    // Test-time introspection helpers (available in all builds via friendship)
+    bool vehicleAvailable() const { return _activeVehicle != nullptr; }
+
+    int vehicleEpoch() const { return _vehicleEpoch; }
+
+    bool linksReceived() const { return _linksService ? _linksService->hasLinksTelemetry() : false; }
+
+    bool linksStale() const { return _linksStale; }
+
+    bool cameraReceived() const { return _hasCameraTelemetry; }
+
+    bool networkReceived() const { return _hasNetworkTelemetry; }
+
+    bool visionReceived() const { return _hasVisionTelemetry; }
+
+    bool systemReceived() const { return _hasSystemTelemetry; }
+
+    int sourceSystemId() const { return _sourceSystemId; }
+
+    int sourceComponentId() const { return _sourceComponentId; }
 
     QVariantMap ccTelemetryLinks() const;
     QVariantMap ccTelemetryCamera() const;
@@ -436,23 +502,19 @@ public:
     QVariantMap ccTelemetryVision() const;
     QVariantMap ccTelemetrySystem() const;
 
-    Q_INVOKABLE bool logMatchesFilter(const QString& prefix, const QString& category, const QString& text) const;
-
-    // UART-specific apply / save (state-machine driven)
-    Q_INVOKABLE void applyLinksConfig(const QString& fcPort, int fcBaud, const QString& siyiPort, int siyiBaud);
-    Q_INVOKABLE void saveLinksConfig();
-    void _configTimedOut();
-    void _confirmationTimedOut();
-
     // Test helpers
     void processMessageForTest(const mavlink_message_t& message) { _onMavlinkMessageReceived(message); }
+
     void resetForTest();
     void forceStaleForTest();
-
-
+    void setReceivedAgeForTest(const QString& key, qint64 ageMs);
 
 signals:
     void aiVisionControlChanged();
+    void missionChanged();
+    void configStatusChanged();
+    void mavlinkLogMessage(const QString& category, const QString& direction, const QString& message, int severity);
+    void logEntriesChanged();
     void toolbarStateChanged();
     void vehicleConnectedChanged();
     void cameraChanged();
@@ -460,20 +522,12 @@ signals:
     void networkChanged();
     void linksChanged();
     void availablePortsChanged();
-    void ccParametersChanged();
     void ccParametersLoadingChanged();
-    void ccModifiedParamCountChanged();
-    void ccParameterGroupsChanged();
-    void editorApplyChanged();
-    void configStatusChanged();
     void vehicleEpochChanged();
     void vehicleAvailableChanged();
     void systemChanged();
-    void missionChanged();
     void toastChanged();
-    void commandAckReceived(int command, int result, const QString& message);
-    void mavlinkLogMessage(const QString& category, const QString& direction, const QString& message, int severity);
-    void logEntriesChanged();
+    void videoRestarted(int mode);  ///< after a confirmed mode change QGC's player was stopped (and started unless Off)
 
 private slots:
     void _sendAiVisionControl();
@@ -481,16 +535,37 @@ private slots:
     void _onMavlinkMessageReceived(const mavlink_message_t& message);
 
 private:
-    void _logMavlink(const QString& category, const QString& direction, const QString& message, int severity);
     void _showToast(const QString& msg, bool isError);
+    void _logMavlink(const QString& category, const QString& direction, const QString& message, int severity);
     void _clearTelemetryState();
-    void _checkTelemetryConfirmation();
 
     QVariantMap streamState(const QString& stream) const;
-    bool beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem = 0);
+    bool beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem = 0,
+                               const QString& origin = QString(), const QStringList& skippedNotes = QStringList());
+
+    struct OperationStep
+    {
+        QString direction;
+        QString text;
+        QString state;
+        qint64 elapsedMs{0};
+    };
+
+    void addOperationStep(const QString& direction, const QString& text, const QString& state);
+    void settleWaitingSteps(const QString& state);
+    void publishOperation(const QString& outcome, const QString& error = QString());
+    void enterTelemetryWait();
+    void failOperationByTimeout(const QString& reason);
+    void setAckTimedOut();
     void advanceToolbarOperation();
     void checkToolbarEffect();
     void toolbarTimedOut();
+    void endUnconfirmed(const QString& note);
+    bool modeOperationPending() const;
+    QString modeBlockedReason() const;
+    bool refuseStream(const QString& why);
+    void syncPlayerToMode();
+    int _playerMode{-1};  // the confirmed mode QGC's player was last (re)started for; -1 none yet
     void finishToolbarOperation(const QString& error = QString());
     void toolbarParameterSaved(const QString& name, bool success);
     QElapsedTimer _toolbarClock;
@@ -500,7 +575,9 @@ private:
     int _apPrefixLength{0};
     bool _apDhcpEnabled{false};
     QString _companionName;
-    struct ToolbarOperation {
+
+    struct ToolbarOperation
+    {
         QString group;
         QList<QPair<QString, QVariant>> values;
         QMap<QString, QVariant> previous;
@@ -512,54 +589,55 @@ private:
         bool waitingEffect{false};
         qint64 effectAfter{0};
         QString rollbackError;
+        QString origin;  // popup that started it
+        QList<OperationStep> steps;
+        double progress{0.0};
+        qint64 startedMs{0};
+        bool sawInProgress{false};  // the awaited SET got ACK IN_PROGRESS
+        int inProgressAcks{0};      // IN_PROGRESS ACKs since the awaited SET
+        bool expectCancelAck{
+            false};  // a replaced mode operation: the CC answers it before the new one's first IN_PROGRESS
+        bool applySent{false};
+        bool resultSeen{false};
+        bool gapTolerant{false};  // the CC reported a stage after which it drops the link (router/AP restart)
+        bool unconfirmedOnTimeout{false};
+        bool notSaved{false};
+        int lastApplyProgress{-1};
+        QString lastText;  // last STATUSTEXT of the operation's group
         QMap<QString, QVariant> effectCandidate;
         int epoch{0};
     };
+
     std::optional<ToolbarOperation> _toolbarOperation;
     QTimer* _toolbarOperationTimer{nullptr};
+    QTimer* _setAckTimer{nullptr};
+    QMap<QString, QVariantMap> _lastOperation;
     QMap<QString, QString> _toolbarErrors;
 
     // SOLID Services
-    CompanionLogService* _logService = nullptr;
     CompanionLinksService* _linksService = nullptr;
     CompanionParamService* _paramService = nullptr;
-    // Parameters-editor apply in flight: writes still awaiting an ACK, then the staged subsystems to APPLY one by one,
-    // then a readback of what was written.
-    QSet<QString> _editorApplyAwaiting;
-    QMap<QString, QVariant> _editorApplyExpected;
-    QList<int> _editorApplyQueue;
-    bool _editorApplyCommandInFlight = false;
-    bool _editorApplyFailed = false;
-    QStringList _editorApplyLog;
-    QString _editorApplyState = QStringLiteral("idle");
     QTimer* _ccSyncTimer = nullptr;
-    void _editorLog(const QString& line, const char* state = nullptr);
-    void _editorApplyParameterSaved(const QString& name, bool success, const QString& message);
-    void _editorApplyNextCommand();
-    void _editorApplyCommandAck(uint8_t result);
-    void _editorApplyVerify();
-    void _editorApplyReset();
     CompanionMavlinkDispatcher* _dispatcher = nullptr;
 
     QTimer _aiVisionControlTimer;
     bool _boundingBoxEnabled = false;
     bool _trackingEnabled = false;
     bool _followingEnabled = false;
+    bool _hasMissionTelemetry = false;
+    quint32 _lastTriggerId = 0;
+    quint32 _lastTriggerTimeBootMs = 0;
+    CompanionLogService* _logService = nullptr;
     CompanionConfigService* _configService = nullptr;
     QMetaObject::Connection _vehicleDestroyedConnection;
     QPointer<Vehicle> _activeVehicle;
 
     // Telemetry Received Flags
-    bool _hasCameraTelemetry  = false;
-    bool _hasVisionTelemetry  = false;
+    bool _hasCameraTelemetry = false;
+    bool _hasVisionTelemetry = false;
     bool _hasNetworkTelemetry = false;
     QTimer* _telemetryWatchdog = nullptr;
-    bool _hasSystemTelemetry  = false;
-
-    // Mission flag
-    bool _hasMissionTelemetry = false;
-    quint32 _lastTriggerId = 0;
-    quint32 _lastTriggerTimeBootMs = 0;
+    bool _hasSystemTelemetry = false;
 
     // Camera state
     int _camStatus = 0;
@@ -632,9 +710,6 @@ private:
     QString _apWpaPassphrase;
     QString _apKeyMgmt;
 
-    QString _lastAppliedCategory = "FC";
-    QString _configStatus{"IDLE"};
-
     // System state
     int _cpuUsage = 0;
     int _ramUsage = 0;
@@ -651,19 +726,4 @@ private:
     int _sourceComponentId = -1;
     bool _linksStale = false;
     int _vehicleEpoch = 0;
-
-    // Config message (error text)
-    QString _configMessage;
-    quint16 _pendingCommand = 0;
-    bool _waitingTelemetry = false;
-
-    // Config state timers
-    QTimer* _configTimer = nullptr;
-    QTimer* _confirmTimer = nullptr;
-
-    // Pending links config
-    QString _pendingFcPort;
-    int _pendingFcBaud = 0;
-    QString _pendingSiyiPort;
-    int _pendingSiyiBaud = 0;
 };

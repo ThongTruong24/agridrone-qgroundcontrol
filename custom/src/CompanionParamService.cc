@@ -648,6 +648,7 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
         if (pack.param_result == PARAM_ACK_IN_PROGRESS) {
             _isPending[paramId] = true;
             emit logMessage("PARAM", "RX", QString("PARAM_EXT_ACK: %1 in progress").arg(paramId), 6);
+            emit parameterAckInProgress(paramId);
         } else if (pack.param_result == 0 /* PARAM_ACK_ACCEPTED */) {
             _isPending[paramId] = false;
             _stagedValues[paramId] = ackVal;
