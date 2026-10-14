@@ -29,6 +29,8 @@ private slots:
     void _testSetWithoutAnyAckReportsNoResponse();
     void _testSecretNeverAppearsInOperationSteps();
     void _testStreamUrlRefusesInvalidAddress();
+    void _testStreamUrlPathRule();
+    void _testStreamFailureShowsOwnerReason();
     void _testStreamReasonTable();
     void _testLinkPortAndBaudApplyAndConflictGuard();
     void _testHotspotApplyAllowedWhenApOff();

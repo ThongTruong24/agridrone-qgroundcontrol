@@ -250,7 +250,7 @@
                 "h265"
             ],
             "description": "Packaged encoder codec",
-            "reboot": true,
+            "reboot": false,
             "readOnly": false,
             "applyMode": "live"
         },
@@ -375,7 +375,7 @@
             "type": "string",
             "default": "rtsp://127.0.0.1:8554/camera",
             "description": "Vision output stream URL",
-            "reboot": true,
+            "reboot": false,
             "readOnly": false,
             "applyMode": "live"
         },
@@ -410,7 +410,7 @@
             "reboot": false,
             "readOnly": false,
             "applyMode": "live",
-            "default": "640x480"
+            "default": "1280x720"
         },
         {
             "name": "CC_VIS_BR",
@@ -446,7 +446,7 @@
             "label": "Supported Resolutions",
             "type": "string",
             "default": "",
-            "description": "Vision output resolutions offered (CSV, from vision.yaml)",
+            "description": "Vision output resolutions offered (CSV, from the camera profile on /camera_streamer)",
             "reboot": true,
             "readOnly": true,
             "applyMode": "boot_only"
@@ -457,7 +457,7 @@
             "label": "Supported Frame Rates",
             "type": "string",
             "default": "",
-            "description": "Vision inference frame rates offered (CSV)",
+            "description": "Vision inference frame rates offered (CSV, from the camera profile on /camera_streamer)",
             "reboot": true,
             "readOnly": true,
             "applyMode": "boot_only"
@@ -468,7 +468,7 @@
             "label": "Supported Bitrates",
             "type": "string",
             "default": "",
-            "description": "Vision encoder bitrates in kbps offered (CSV)",
+            "description": "Vision encoder bitrates in kbps offered (CSV, from the camera profile on /camera_streamer)",
             "reboot": true,
             "readOnly": true,
             "applyMode": "boot_only"

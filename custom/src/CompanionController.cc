@@ -712,13 +712,20 @@ QVariantMap CompanionController::hotspotState() const
 }
 
 namespace {
-bool validPublishUrl(const QString& input)
+// Same rule as the CC's SET check: rtsp only, and a path of plain segments (no %, no empty/./.. segment).
+QString publishUrlError(const QString& input)
 {
-    if (input.toUtf8().size() > 127 || input.contains(QRegularExpression("[\\s\\x00-\\x1f\\x7f]"))) return false;
+    const auto invalid = QStringLiteral("Địa chỉ RTSP không hợp lệ");
+    if (input.toUtf8().size() > 127 || input.contains(QRegularExpression("[\\s\\x00-\\x1f\\x7f]"))) return invalid;
     const QUrl url(input, QUrl::StrictMode);
-    return url.isValid() && url.scheme() == "rtsp" && !url.host().isEmpty() &&
-        !url.path().isEmpty() && url.path() != "/" && url.userInfo().isEmpty() && url.fragment().isEmpty() &&
-        url.port(554) > 0 && url.port(554) <= 65535;
+    if (!(url.isValid() && url.scheme() == "rtsp" && !url.host().isEmpty() &&
+          !url.path().isEmpty() && url.path() != "/" && url.userInfo().isEmpty() && url.fragment().isEmpty() &&
+          url.port(554) > 0 && url.port(554) <= 65535)) return invalid;
+    static const QRegularExpression segments(QStringLiteral("^(/(?!\\.{1,2}(?=/|$))[A-Za-z0-9_.~-]+)+$"));
+    if (input.left(input.indexOf('?') < 0 ? input.size() : input.indexOf('?')).contains('%') || !segments.match(url.path()).hasMatch()) {
+        return QStringLiteral("Đường dẫn RTSP chỉ dùng A-Z a-z 0-9 _ . ~ / - (không có đoạn rỗng, . hoặc .., không có %)");
+    }
+    return QString();
 }
 }
 
@@ -997,7 +1004,10 @@ bool CompanionController::setStreamParameter(const QString& stream, const QStrin
     // camera_streamer owns the Vision video parameters too; only the inference ones need the Vision node.
     const bool visionNode = id == "CC_VIS_FPS" || id == "CC_VIS_CONF";
     if (!allowed.contains(id) || !streamState(visionNode ? "vision" : "camera").value("available").toBool()) return false;
-    if (id.endsWith("_URL") && !validPublishUrl(value.toString())) return refuseStream(tr("Địa chỉ RTSP không hợp lệ"));
+    if (id.endsWith("_URL")) {
+        const QString urlError = publishUrlError(value.toString());
+        if (!urlError.isEmpty()) return refuseStream(urlError);
+    }
     if (id.endsWith("CODEC")) {
         auto mask = _streamTelemetry.value("camera").value("supportedCodecs").toInt();
         if ((value.toString() == "h264" && !(mask & 1)) || (value.toString() == "h265" && !(mask & 2)) ||

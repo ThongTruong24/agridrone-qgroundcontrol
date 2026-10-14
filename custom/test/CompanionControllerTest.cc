@@ -864,6 +864,45 @@ void CompanionVehicleLifecycleTest::_testStreamUrlRefusesInvalidAddress()
     QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_CAM_PUB_URL"), 3000);
 }
 
+// 2026-10-14: the CC refuses a publish path with %, an empty/./.. segment or characters outside A-Za-z0-9_.~/- at SET;
+// the popup now refuses it locally with its own message instead of getting a generic rejection.
+void CompanionVehicleLifecycleTest::_testStreamUrlPathRule()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    const int base = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    for (const char* bad : {"rtsp://drone.local:8554/camera/", "rtsp://drone.local:8554//camera", "rtsp://h/a/../camera", "rtsp://h/./camera",
+                            "rtsp://h/%63amera", "rtsp://h/my cam", "rtsp://h/ca$mera"}) {
+        QVERIFY2(!controller.setStreamParameter("camera", "CC_CAM_PUB_URL", bad), bad);
+        if (!QByteArray(bad).contains(' ')) QVERIFY2(stepTexts(controller.operationState("stream")).contains(QStringLiteral(
+            "Đường dẫn RTSP chỉ dùng A-Z a-z 0-9 _ . ~ / - (không có đoạn rỗng, . hoặc .., không có %)")), bad);
+    }
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), base);
+    for (const char* good : {"rtsp://drone.local:8554/camera", "rtsp://h:8554/live/cam-1_a.b~c", "rtsp://h/camera?x=%41"}) {
+        QVERIFY2(controller.setStreamParameter("camera", "CC_CAM_PUB_URL", good), good);
+        QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_CAM_PUB_URL"), 3000);
+        ackParamSet(controller, system, "CC_CAM_PUB_URL", QString(good));
+        QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("confirmed"), 3000);
+    }
+}
+
+// 2026-10-14: the CC names the owner's reason in a "Camera: "/"Vision: " line right before FAILED; the popup shows it.
+void CompanionVehicleLifecycleTest::_testStreamFailureShowsOwnerReason()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    primeStreamMode(controller, system, 1);
+    QVERIFY(controller.setStreamParameter("camera", "CC_CAM_PUB_URL", "rtsp://h/other"));
+    QTRY_COMPARE_WITH_TIMEOUT(lastSetId(mockLink()), QString("CC_CAM_PUB_URL"), 3000);
+    sendCompanionText(controller, system, "Camera: path /other is held by another publisher");
+    ackParamSet(controller, system, "CC_CAM_PUB_URL", QString("rtsp://h/other"), PARAM_ACK_FAILED);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("error"), 2000);
+    QCOMPARE(controller.operationState("stream")["error"].toString(), QString("Camera: path /other is held by another publisher"));
+}
+
 // 2026-10-12: popups said only "Controls require current Companion firmware and telemetry".
 void CompanionVehicleLifecycleTest::_testStreamReasonTable()
 {
