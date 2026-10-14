@@ -457,7 +457,7 @@
             "label": "Supported Frame Rates",
             "type": "string",
             "default": "",
-            "description": "Vision inference frame rates offered (CSV, from the camera profile on /camera_streamer)",
+            "description": "Vision inference frame rates offered (CSV, from supported.inference_fps in vision.yaml on /vision)",
             "reboot": true,
             "readOnly": true,
             "applyMode": "boot_only"
