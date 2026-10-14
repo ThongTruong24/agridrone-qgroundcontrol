@@ -37,6 +37,7 @@ class CompanionController : public QObject
     QML_ELEMENT
     QML_SINGLETON
     friend class CompanionControllerTest;
+    friend class CompanionVehicleLifecycleTest;
 
     // Vehicle status
     Q_PROPERTY(bool vehicleConnected READ vehicleConnected NOTIFY vehicleConnectedChanged)

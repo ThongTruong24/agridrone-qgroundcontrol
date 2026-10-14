@@ -342,12 +342,25 @@ bool runLinkApplyToAccepted(CompanionController& c, uint8_t system, QList<mavlin
 }
 
 // A second links APPLY (link 0 to /dev/ttyUSB0 @ 57600) sent: SETs ACKed, COMMAND_LONG out, no reply from the CC yet.
-bool startLinkApply(CompanionController& c, QList<mavlink_message_t>& sent)
+bool startLinkApply(CompanionController& c, QList<mavlink_message_t>& sent, uint8_t system = 1)
 {
     sent.clear();
     if (!c.setLinkConfig(0, "/dev/ttyUSB0", 57600)) return false;
-    ackAllSets(c, 1, sent);
+    ackAllSets(c, system, sent);
     return commandSent(sent);
+}
+
+int countSent(const QList<mavlink_message_t>& sent, uint32_t msgid)
+{
+    return int(std::count_if(sent.cbegin(), sent.cend(), [msgid](const mavlink_message_t& m) { return m.msgid == msgid; }));
+}
+
+// The AP's network telemetry, sent until the op ends (each copy newer than the reconnect); returns the op's outcome.
+QString outcomeWhileAp(CompanionController& c, const char* ssid, const char* ip, bool apUp)
+{
+    const bool ended = QTest::qWaitFor([&]() { sendNetwork(c, 1, ssid, ip, true, apUp);
+        return !c.operationState("companion")["active"].toBool(); }, 3000);
+    return ended ? c.operationState("companion")["outcome"].toString() : QStringLiteral("still active");
 }
 
 // Hotspot APPLY sent; the CC's first reply IN_PROGRESS `progress` (35: AP restarting), none when negative.
@@ -867,12 +880,46 @@ void CompanionControllerTest::_testApplyWaitsThroughHeartbeatLossThenReadsBack()
     sent.clear();
     sendCompanionHeartbeat(controller, 1); // CC back
     QTRY_VERIFY_WITH_TIMEOUT(std::any_of(sent.cbegin(), sent.cend(), [](const auto& m) { return m.msgid == MAVLINK_MSG_ID_PARAM_EXT_REQUEST_LIST; }), 2000);
-    primeParam(controller, 1, "CC_AP_SSID", QString("Candidate"));
-    primeParam(controller, 1, "CC_AP_IP", QString("192.168.11.1/24"));
-    QVERIFY(controller.operationState("companion")["active"].toBool()); // CC_AP_DHCP not read back yet
-    primeParam(controller, 1, "CC_AP_DHCP", 1u);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["outcome"].toString(), QString("confirmed"), 3000);
+    readBackCandidateHotspot(controller);
+    // 2026-10-15: this readback said "confirmed", but the CC keeps a failed hotspot candidate active and staged, so it
+    // matches either way (asserted "confirmed" here before). Only the AP's telemetry after the reconnect confirms it.
+    QVERIFY(controller.operationState("companion")["active"].toBool());
+    QVERIFY(controller._toolbarOperationTimer->isActive()); // a bounded window for the AP to show the candidate
+    controller._clearTelemetryState(); // lost again inside it: no deadline while the CC is away
+    QVERIFY(controller.operationState("companion")["active"].toBool());
+    QVERIFY(!controller._toolbarOperationTimer->isActive());
+    sendCompanionHeartbeat(controller, 1);
+    QCOMPARE(outcomeWhileAp(controller, "Candidate", "192.168.11.1", true), QString("confirmed"));
     QVERIFY(controller.hotspotState()["unsaved"].toBool());
+    QVERIFY(controller.saveCompanionGroup("hotspot"));
+}
+
+// 2026-10-15: the CC writes a hotspot candidate to its active file before verifying it and keeps it when the AP fails; the
+// matching readback after a reconnect said "confirmed" and SAVE persisted the failed AP config.
+void CompanionControllerTest::_testHotspotReadbackAloneDoesNotConfirm()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    QVERIFY(startHotspotApplyThenLoseCompanion(controller, sent));
+    sendCompanionHeartbeat(controller, 1);
+    readBackCandidateHotspot(controller); // the stage equals the candidate whether the AP came up or not
+    QCOMPARE(outcomeWhileAp(controller, "Existing", "192.168.10.1", false), QString("unconfirmed")); // AP down, old config
+    QVERIFY(stepTexts(controller.operationState("companion")).contains(QStringLiteral("Chưa xác nhận: AP chưa phát cấu hình mới")));
+    QVERIFY(!controller.hotspotState()["unsaved"].toBool());
+    QVERIFY(!controller.saveCompanionGroup("hotspot"));
+}
+
+// 2026-10-15: back after the loss with the AP up on another config, the candidate did not come up; the readback said "confirmed".
+void CompanionControllerTest::_testHotspotOtherConfigAfterReconnectFails()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    QVERIFY(startHotspotApplyThenLoseCompanion(controller, sent));
+    sendCompanionHeartbeat(controller, 1);
+    readBackCandidateHotspot(controller);
+    QCOMPARE(outcomeWhileAp(controller, "Existing", "192.168.10.1", true), QString("error"));
+    QCOMPARE(controller.operationState("companion")["error"].toString(), QString("Không áp dụng được"));
+    QVERIFY(!controller.saveCompanionGroup("hotspot"));
 }
 
 // 2026-10-14: spec test 15 names links too: a links APPLY may change the baud of the very link QGC uses.
@@ -946,7 +993,8 @@ void CompanionControllerTest::_testApplyWithoutReceiptReadbackIsUnconfirmed()
     sendCompanionHeartbeat(controller, 1);
     readBackCandidateHotspot(controller);
     QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["outcome"].toString(), QString("unconfirmed"), 3000);
-    QVERIFY(stepTexts(controller.operationState("companion")).contains(QStringLiteral("Chưa xác nhận")));
+    // 2026-10-15: the hotspot readback no longer decides (it was the step "Chưa xác nhận" here); the AP window ends it.
+    QVERIFY(stepTexts(controller.operationState("companion")).contains(QStringLiteral("Chưa xác nhận: AP chưa phát cấu hình mới")));
     QVERIFY(!controller.hotspotState()["unsaved"].toBool());
     QVERIFY(!controller.saveCompanionGroup("hotspot"));
 }
@@ -1009,7 +1057,8 @@ void CompanionControllerTest::_testCancelledLinkApplyBlocksSave()
     primeParam(controller, 1, "CC_L1_PORT", QString("/dev/ttyAMA0"));
     primeParam(controller, 1, "CC_L1_BAUD", 57600u);
     sent.clear();
-    QVERIFY(runLinkApplyToAccepted(controller, 1, sent, 0, "FC", "/dev/ttyAMA4", 921600)); // another value for link 0, confirmed
+    // 2026-10-15: the natural retry, the cancelled candidate again (it sent nothing, so this test used another value).
+    QVERIFY(runLinkApplyToAccepted(controller, 1, sent));
     QVERIFY(controller.companionState()["unsaved"].toBool());
     QVERIFY(controller.saveCompanionGroup("links"));
 }
@@ -1051,6 +1100,82 @@ void CompanionControllerTest::_testSilentLinkApplyBlocksSave()
     QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["error"].toString(), QString("Companion không phản hồi"), 3000);
     QVERIFY(!controller.companionState()["unsaved"].toBool());
     QVERIFY(!controller.saveCompanionGroup("links"));
+
+    // 2026-10-15: the same values again set nothing (they equal the stage) and sent nothing, so the block never lifted.
+    primeParam(controller, 1, "CC_L0_PORT", QString("/dev/ttyUSB0")); // answers the re-read: the stage holds the candidate
+    primeParam(controller, 1, "CC_L0_BAUD", 57600u);
+    sendSerialLink(controller, 1, 0, 2, "FC", "/dev/ttyUSB0", 57600); // the CC applied it; only its answer was lost
+    sent.clear();
+    QVERIFY(runLinkApplyToAccepted(controller, 1, sent)); // an APPLY alone, confirmed by telemetry
+    QCOMPARE(countSent(sent, MAVLINK_MSG_ID_PARAM_EXT_SET), 0);
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+    QVERIFY(controller.saveCompanionGroup("links"));
+}
+
+// 2026-10-15: an APPLY lost on the wire leaves the candidate staged on the CC; asking for it again found nothing to SET and
+// returned without sending the APPLY, so the change could never be applied or saved.
+void CompanionControllerTest::_testRetryOfStagedLinkSendsApplyOnly()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    primeParam(controller, 1, "CC_L0_PORT", QString("/dev/ttyUSB0")); // staged; the link telemetry still shows the old one
+    primeParam(controller, 1, "CC_L0_BAUD", 57600u);
+    sent.clear();
+    QVERIFY(controller.setLinkConfig(0, "/dev/ttyUSB0", 57600));
+    QCOMPARE(sent.size(), 1);
+    QCOMPARE(sent.last().msgid, uint32_t(MAVLINK_MSG_ID_COMMAND_LONG));
+    mavlink_command_long_t cmd{};
+    mavlink_msg_command_long_decode(&sent.last(), &cmd);
+    QCOMPARE(cmd.command, static_cast<uint16_t>(MAV_CMD_THACO_APPLY_CONFIG));
+    QCOMPARE(cmd.param1, 1.0f);
+    QVERIFY(stepTexts(controller.operationState("companion")).contains(QStringLiteral("APPLY links")));
+    sendCommandAck(controller, 1, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(([&]() { sendSerialLink(controller, 1, 0, 2, "FC", "/dev/ttyUSB0", 57600);
+        return controller.operationState("companion")["outcome"].toString(); })(), QString("confirmed"), 2000);
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+}
+
+// Nothing staged and nothing unproven: the same values again send nothing (kept by the 2026-10-15 APPLY-only retry).
+void CompanionControllerTest::_testUnchangedLinkRequestSendsNothing()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    sent.clear();
+    QVERIFY(controller.setLinkConfig(0, "/dev/ttyAMA4", 921600));
+    QVERIFY(sent.isEmpty());
+    QVERIFY(!controller.companionState()["pending"].toBool());
+}
+
+// 2026-10-15: a hotspot draft equal to the CC's stage set nothing and sent nothing, so a lost or failed hotspot APPLY could
+// not be retried with the same values and SAVE stayed blocked.
+void CompanionControllerTest::_testHotspotRetrySendsApplyOnly()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    primeHotspot(controller, 1);
+    readBackCandidateHotspot(controller); // staged by an APPLY that never ran; the AP still shows "Existing"
+    const auto applyOnly = [&]() {
+        sent.clear();
+        if (!controller.applyHotspot({{"ssid", "Candidate"}, {"ipCidr", "192.168.11.1/24"}, {"dhcpEnabled", true}}) || !commandSent(sent)) return false;
+        mavlink_command_long_t cmd{};
+        mavlink_msg_command_long_decode(&sent.last(), &cmd);
+        return sent.size() == 1 && cmd.command == MAV_CMD_THACO_APPLY_CONFIG && cmd.param1 == 3.0f;
+    };
+    QVERIFY(applyOnly());
+    sendCommandAck(controller, 1, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_FAILED, 0); // the candidate stays active: SAVE blocked
+    readBackCandidateHotspot(controller);                          // answers the re-read: the stage resynced to that candidate
+    sendNetwork(controller, 1, "Candidate", "192.168.11.1", true); // and the AP shows it, so only the block is left
+    QVERIFY(applyOnly());
+    sendCommandAck(controller, 1, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0);
+    QCOMPARE(outcomeWhileAp(controller, "Candidate", "192.168.11.1", true), QString("confirmed"));
+    QVERIFY(controller.hotspotState()["unsaved"].toBool());
+    QVERIFY(controller.saveCompanionGroup("hotspot"));
 }
 
 // 2026-10-14: a failed or unconfirmed hotspot APPLY leaves its candidate active on the CC (no rollback); SAVE would
@@ -1263,10 +1388,9 @@ void CompanionControllerTest::_testReadbackSkipsSecret()
     QList<mavlink_message_t> sent;
     QVERIFY(startHotspotApplyThenLoseCompanion(controller, sent, 1, QStringLiteral("Secret-Canary-123")));
     sendCompanionHeartbeat(controller, 1);
-    primeParam(controller, 1, "CC_AP_SSID", QString("Candidate"));
-    primeParam(controller, 1, "CC_AP_IP", QString("192.168.11.1/24"));
-    primeParam(controller, 1, "CC_AP_DHCP", 1u);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["outcome"].toString(), QString("confirmed"), 3000);
+    readBackCandidateHotspot(controller);
+    // 2026-10-15: the hotspot is confirmed by the AP's telemetry after the reconnect, no longer by this readback.
+    QCOMPARE(outcomeWhileAp(controller, "Candidate", "192.168.11.1", true), QString("confirmed"));
     for (const auto& text : stepTexts(controller.operationState("companion"))) QVERIFY2(!text.contains("Secret-Canary-123"), qPrintable(text));
 }
 
@@ -1280,10 +1404,9 @@ void CompanionControllerTest::_testTelemetryTimeoutKeepsApplyWait()
     QVERIFY(controller.operationState("companion")["active"].toBool());
     QVERIFY(controller.companionState()["waitingReconnect"].toBool());
     sendCompanionHeartbeat(controller, 1);
-    primeParam(controller, 1, "CC_AP_SSID", QString("Candidate"));
-    primeParam(controller, 1, "CC_AP_IP", QString("192.168.11.1/24"));
-    primeParam(controller, 1, "CC_AP_DHCP", 1u);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["outcome"].toString(), QString("confirmed"), 3000);
+    readBackCandidateHotspot(controller);
+    // 2026-10-15: the hotspot is confirmed by the AP's telemetry after the reconnect, no longer by this readback.
+    QCOMPARE(outcomeWhileAp(controller, "Candidate", "192.168.11.1", true), QString("confirmed"));
 }
 
 // 2026-10-13: the stream ON/OFF half of this test went with CC_CAM_FPV_EN/PUB_EN; the readback, link and hotspot halves stay.
@@ -2162,6 +2285,8 @@ void CompanionVehicleLifecycleTest::_testOtherVehicleResetsCompanionLock()
     QVERIFY(controller.ccSessionEpoch() > epoch);
     QVERIFY(!controller.companionState()["pending"].toBool());
     QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("error"));
+    // 2026-10-15: the op this change ended must not leave a SAVE block behind; the switch clears the flags (findings r2).
+    QVERIFY(controller._saveBlocked.isEmpty());
 
     sendCompanionHeartbeat(controller, other); // that CC may not lock again while this Vehicle is active
     QCOMPARE(controller.sourceSystemId(), -1);
@@ -2242,4 +2367,41 @@ void CompanionVehicleLifecycleTest::_testUnsavedKeptWhenSameCompanionReturns()
     sendCompanionHeartbeat(controller, system);
     QCOMPARE(controller.sourceSystemId(), int(system));
     QVERIFY(controller.companionState()["unsaved"].toBool());
+}
+
+// 2026-10-15: a links APPLY cancelled while the Vehicle loss had reset the CC lock left Lưu offered when the same CC locked
+// again; SAVE then persisted the cancelled, unproven candidate.
+void CompanionVehicleLifecycleTest::_testCancelDuringLockResetBlocksSave()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    _connectMockLinkNoInitialConnectSequence();
+    const uint8_t system = vehicle()->id();
+    primeCompanionWithoutVehicle(controller, system);
+    QVERIFY(runLinkApplyToAccepted(controller, system, sent, 1, "SIYI", "/dev/ttyAMA0", 57600));
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+    QVERIFY(startLinkApply(controller, sent, system));
+    sendCommandAck(controller, system, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50);
+    controller.setReceivedAgeForTest("heartbeat", 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller.companionState()["waitingReconnect"].toBool(), 2000);
+    _disconnectMockLink(); // the Vehicle goes while the CC is stale: the lock resets
+    QCOMPARE(controller.sourceSystemId(), -1);
+    controller.cancelCompanionWait();
+    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("unconfirmed"));
+    sendCompanionHeartbeat(controller, system); // the same CC locks again
+    QCOMPARE(controller.sourceSystemId(), int(system));
+    QVERIFY(!controller.companionState()["unsaved"].toBool());
+    QVERIFY(!controller.saveCompanionGroup("links"));
+
+    sendSerialLink(controller, system, 0, 2, "FC", "/dev/ttyAMA4", 921600); // its telemetry and parameters after the loss
+    sendSerialLink(controller, system, 1, 2, "SIYI", "/dev/ttyAMA0", 57600);
+    primeParam(controller, system, "CC_L0_PORT", QString("/dev/ttyUSB0")); // the stage still holds the cancelled candidate
+    primeParam(controller, system, "CC_L0_BAUD", 57600u);
+    primeParam(controller, system, "CC_L1_PORT", QString("/dev/ttyAMA0"));
+    primeParam(controller, system, "CC_L1_BAUD", 57600u);
+    sent.clear();
+    QVERIFY(runLinkApplyToAccepted(controller, system, sent)); // the same candidate again, confirmed
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+    QVERIFY(controller.saveCompanionGroup("links"));
 }

@@ -41,6 +41,11 @@ private slots:
     void _testFailedHotspotApplyBlocksSave();
     void _testPendingStageOfAnotherLinkRidesAlong();
     void _testStreamPopupWithoutVehicle();
+    void _testHotspotReadbackAloneDoesNotConfirm();
+    void _testHotspotOtherConfigAfterReconnectFails();
+    void _testRetryOfStagedLinkSendsApplyOnly();
+    void _testUnchangedLinkRequestSendsNothing();
+    void _testHotspotRetrySendsApplyOnly();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -82,4 +87,5 @@ private slots:
     void _testApplyWaitAcrossVehicleLoss();
     void _testUnsavedClearedWhenCompanionLockResets();
     void _testUnsavedKeptWhenSameCompanionReturns();
+    void _testCancelDuringLockResetBlocksSave();
 };
