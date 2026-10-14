@@ -87,7 +87,8 @@ public:
     int stagedSubsystem(const QString& name) const;
     /// Facts for the Parameters editor, in catalog order. Edits made on them are staged here.
     QList<Fact*> allFacts() const;
-    void sendSingleParamSet(const QString& name, const QVariant& value);
+    /// false only when the PARAM_EXT_SET could not be sent (no transport, or the send failed); a SET it skips counts as sent.
+    bool sendSingleParamSet(const QString& name, const QVariant& value);
 
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
     bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }

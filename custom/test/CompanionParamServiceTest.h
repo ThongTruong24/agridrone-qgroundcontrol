@@ -22,4 +22,5 @@ private slots:
     void _testFactsAreDeveloperCategoryAndEditsAreStaged();
     void _testEditorFactOrderAndStagedSubsystems();
     void _testRequestGoesToTransportWithoutVehicle();
+    void _testFailedRequestSendDoesNotLoad();
 };

@@ -357,3 +357,12 @@ void CompanionParamServiceTest::_testRequestGoesToTransportWithoutVehicle()
     QCOMPARE(request.target_component, uint8_t(191));
     QVERIFY(service.isLoading());
 }
+
+// 2026-10-14: a REQUEST_LIST that could not be sent left the service "loading", which refused every operation for 6 s.
+void CompanionParamServiceTest::_testFailedRequestSendDoesNotLoad()
+{
+    CompanionParamService service;
+    service.setTransport({7, 0, [](const mavlink_message_t&) { return false; }});
+    service.requestParameters();
+    QVERIFY(!service.isLoading());
+}

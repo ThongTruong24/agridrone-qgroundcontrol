@@ -275,16 +275,18 @@ void CompanionParamService::requestParameters()
         return;
     }
 
+    mavlink_message_t msg;
+    mavlink_msg_param_ext_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+        _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId);
+    if (!_transport.send(msg)) {
+        emit logMessage("PARAM", "ERR", "Cannot request CC params: send failed", 3);
+        return; // not loading: nothing will answer, and loading refuses every operation
+    }
     _isLoading = true;
     _receivedCount = 0;
     _expectedCount = 0;
     _loadingTimeoutTimer->start();
     emit isLoadingChanged();
-
-    mavlink_message_t msg;
-    mavlink_msg_param_ext_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
-        _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId);
-    _transport.send(msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_LIST sent to Comp %1").arg(kCompanionComponentId), 6);
     // The CC leaves out parameters it cannot read at this moment; ask for those individually once the LIST is done.
     QTimer::singleShot(4000, this, [this]() { readMissing(); });
@@ -382,12 +384,12 @@ QList<Fact*> CompanionParamService::allFacts() const
     return facts;
 }
 
-void CompanionParamService::sendSingleParamSet(const QString& name, const QVariant& value)
+bool CompanionParamService::sendSingleParamSet(const QString& name, const QVariant& value)
 {
-    if (!_transport.valid() || !_meta.contains(name)) return;
-    if (_meta[name].readOnly) return;
+    if (!_transport.valid()) return false;
+    if (!_meta.contains(name) || _meta[name].readOnly) return true;
     // A lost ACK leaves a write uncertain; rollback must resend even the old readback value.
-    if (!_isPending.value(name) && confirmedValue(name).isValid() && confirmedValue(name).toString() == value.toString()) return;
+    if (!_isPending.value(name) && confirmedValue(name).isValid() && confirmedValue(name).toString() == value.toString()) return true;
 
     const auto& meta = _meta[name];
     char paramIdBuf[16];
@@ -402,9 +404,10 @@ void CompanionParamService::sendSingleParamSet(const QString& name, const QVaria
     mavlink_msg_param_ext_set_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
         _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId, paramIdBuf, valBuf, meta.type);
 
+    if (!_transport.send(msg)) return false;
     _isPending[name] = true;
-    _transport.send(msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, meta.isSecret ? QStringLiteral("<hidden>") : value.toString()), 6);
+    return true;
 }
 
 bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& message)

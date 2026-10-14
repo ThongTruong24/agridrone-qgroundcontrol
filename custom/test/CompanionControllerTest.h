@@ -15,6 +15,9 @@ private slots:
     void _testToolbarPopupsLoad();
     void _testLinkApplyWithoutVehicle();
     void _testApplyNotResentWhenCompanionSilent();
+    void _testFirstCompanionLocksWithoutVehicle();
+    void _testFailedSendEndsOperationAtOnce();
+    void _testCompanionAckRestartsWatchdog();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
@@ -23,7 +26,7 @@ class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
 
 private slots:
     void _testDisconnectAndReconnectReset();
-    void _testReadbackLinkHotspotAndVehicleCancel();
+    void _testReadbackLinkHotspotAndOpOutlivesVehicle();
     void _testStreamOptionsFromCapabilityParams();
     void _testApplyProgressFromCompanionStages();
     void _testLinkApplyGapConfirmedByTelemetry();
@@ -50,4 +53,7 @@ private slots:
     void _testReplaceIgnoresStaleKeepalive();
     void _testReplaceRefusedKeepsOldOp();
     void _testMessageProcessedOnce();
+    void _testOtherSystemCompanionGetsNoConfig();
+    void _testOtherVehicleResetsCompanionLock();
+    void _testReplaceNotSentKeepsOldOp();
 };

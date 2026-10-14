@@ -247,11 +247,16 @@ void CompanionController::_setActiveVehicle(Vehicle* vehicle)
 {
     if (_activeVehicle == vehicle) return;
 
-    // The CC session does not hang on the FC's Vehicle: it ends with it only when the CC heartbeat is stale too.
-    if (_activeVehicle && !companionState().value("connected").toBool()) {
-        _clearTelemetryState();
+    // The CC session does not hang on the FC's Vehicle: it ends with it only when the CC heartbeat is stale too. A Vehicle of
+    // another system ends it at once: QGC never configures a CC that is not the active Vehicle's (spec §5, ADR-0001).
+    const bool otherSystem = vehicle && _sourceSystemId >= 0 && vehicle->id() != _sourceSystemId;
+    if (otherSystem || (_activeVehicle && !companionState().value("connected").toBool())) {
         _sourceSystemId    = -1;
         _sourceComponentId = -1;
+        _ccLink.reset();
+        _paramService->setTransport({}); // before the clear: its failed-op re-read must not reach the old CC
+        ++_ccSessionEpoch;
+        _clearTelemetryState();
     }
 
     _activeVehicle = vehicle;
@@ -268,6 +273,7 @@ CompanionTransport CompanionController::transport()
 
 bool CompanionController::sendToCompanion(const mavlink_message_t& message)
 {
+    if (_activeVehicle && _activeVehicle->id() != _sourceSystemId) return false; // never another drone's CC (spec §5)
     if (_sendHook) return _sendHook(message);
     return Companion::sendMessage(nullptr, _ccLink.lock(), message); // no Vehicle needed (spec §5)
 }
@@ -349,6 +355,8 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
     }
 
     if (_sourceComponentId < 0) {
+        // While a Vehicle is active only its own CC may lock; without one the first CC heard does (ADR-0001).
+        if (_activeVehicle && message.sysid != _activeVehicle->id()) return;
         _sourceSystemId    = message.sysid;
         _sourceComponentId = message.compid;
     } else if (message.sysid != _sourceSystemId || message.compid != _sourceComponentId) {
@@ -368,6 +376,17 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         emit toolbarStateChanged();
         return;
     }
+    if (_telemetryWatchdog) {
+        _telemetryWatchdog->start();
+    }
+
+    // Telemetry stream active -> dismiss stale offline/timeout toast immediately
+    if (_lastToastMsg.contains(QStringLiteral("timed out")) || _lastToastMsg.contains(QStringLiteral("OFFLINE"))) {
+        _lastToastMsg.clear();
+        _lastToastIsError = false;
+        emit toastChanged();
+    }
+
     if (message.msgid == MAVLINK_MSG_ID_COMMAND_ACK) {
         // QGC's own client for the command it sent the CC (no MavCommandQueue: no resend).
         if (_toolbarOperation && _toolbarOperation->applySent && !_toolbarOperation->resultSeen) {
@@ -382,17 +401,7 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
                 onApplyResult(ack.result, false);
             }
         }
-        return;
-    }
-    if (_telemetryWatchdog) {
-        _telemetryWatchdog->start();
-    }
-
-    // Telemetry stream active -> dismiss stale offline/timeout toast immediately
-    if (_lastToastMsg.contains(QStringLiteral("timed out")) || _lastToastMsg.contains(QStringLiteral("OFFLINE"))) {
-        _lastToastMsg.clear();
-        _lastToastIsError = false;
-        emit toastChanged();
+        return; // no handler or telemetry case reads a COMMAND_ACK
     }
 
     if (message.msgid == MAVLINK_MSG_ID_CC_SERIAL_LINK) {
@@ -767,7 +776,8 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
                                                 const QString& origin, const QStringList& skippedNotes)
 {
     if (_paramService->isLoading() || _toolbarOperation || !companionState().value("connected").toBool() ||
-        _sourceComponentId != kCompanionCompId || (!streamGroup(group) && _activeVehicle && _activeVehicle->armed())) return false;
+        _sourceComponentId != kCompanionCompId || (_activeVehicle && _activeVehicle->id() != _sourceSystemId) ||
+        (!streamGroup(group) && _activeVehicle && _activeVehicle->armed())) return false;
     if (subsystem == 1) {
         for (const auto& item : serialLinks()) {
             const auto link = item.toMap();
@@ -816,7 +826,7 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
     if (!streamGroup(group)) _toolbarOperationTimer->start(totalMs(group));
     publishOperation(QString());
     advanceToolbarOperation();
-    return true;
+    return _toolbarOperation.has_value(); // false: its first SET could not be sent, the op already ended
 }
 
 void CompanionController::advanceToolbarOperation()
@@ -833,7 +843,7 @@ void CompanionController::advanceToolbarOperation()
         addOperationStep("tx", QStringLiteral("%1PARAM_EXT_SET %2=%3").arg(op.rollingBack ? QStringLiteral("(rollback) ") : QString(), entry.first,
                          secret ? QStringLiteral("<hidden>") : entry.second.toString()), "waiting");
         _setAckTimer->start(streamGroup(op.group) ? silenceMs() : firstAckMs());
-        _paramService->sendSingleParamSet(entry.first, entry.second);
+        if (!_paramService->sendSingleParamSet(entry.first, entry.second)) finishToolbarOperation(tr("Không gửi được tới Companion"));
         return;
     }
     op.awaiting.clear();
@@ -845,7 +855,10 @@ void CompanionController::advanceToolbarOperation()
         op.command = MAV_CMD_THACO_APPLY_CONFIG;
         op.effectAfter = _toolbarClock.elapsed();
         addOperationStep("tx", QStringLiteral("APPLY %1").arg(op.group), "waiting");
-        sendCompanionCommand(MAV_CMD_THACO_APPLY_CONFIG, op.subsystem, 1);
+        if (!sendCompanionCommand(MAV_CMD_THACO_APPLY_CONFIG, op.subsystem, 1)) {
+            finishToolbarOperation(tr("Không gửi được tới Companion"));
+            return;
+        }
         _setAckTimer->start(silenceMs()); // 3 s of CC silence ends the wait (spec §5)
     } else finishToolbarOperation();
 }
@@ -1103,6 +1116,7 @@ bool CompanionController::setStreamMode(int mode)
     _toolbarOperation.reset();
     if (!beginToolbarOperation("camera", {{kModeId, mode}})) {
         _toolbarOperation = replaced; // nothing was sent: the old op goes on
+        _setAckTimer->start(silenceMs()); // a replacing SET that failed to send stopped the old op's silence timer
         return refuseStream(notSent);
     }
     auto& op = *_toolbarOperation;

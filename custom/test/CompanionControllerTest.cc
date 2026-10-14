@@ -594,7 +594,14 @@ void CompanionControllerTest::_testLinkApplyWithoutVehicle()
     QCOMPARE(cmd.target_component, static_cast<uint8_t>(191));
     QCOMPARE(cmd.param1, 1.0f);
 
+    // 2026-10-14: only the CC's ACK for this command settles the APPLY; FAILED would end the op if either one matched.
     mavlink_message_t ack{};
+    mavlink_msg_command_ack_pack(sys, 1, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_FAILED, 0, 0, 0, 0); // the FC's
+    controller.processMessageForTest(ack);
+    mavlink_msg_command_ack_pack(sys, 191, &ack, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_FAILED, 0, 0, 0, 0); // another command
+    controller.processMessageForTest(ack);
+    QVERIFY(controller.operationState("companion")["active"].toBool());
+
     mavlink_msg_command_ack_pack(sys, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0, 0, 0, 0);
     controller.processMessageForTest(ack);
     QTRY_COMPARE_WITH_TIMEOUT(([&]() { sendLinks(controller, sys, 57600, 115200);
@@ -623,10 +630,70 @@ void CompanionControllerTest::_testApplyNotResentWhenCompanionSilent()
     QCOMPARE(commands(), 1);
     QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("error"));
     QCOMPARE(controller.operationState("companion")["error"].toString(), QString("Companion không phản hồi"));
+
+    // 2026-10-14: an ACK after the wait ended changes nothing.
+    mavlink_message_t late{};
+    mavlink_msg_command_ack_pack(sys, 191, &late, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0, 0, 0, 0);
+    controller.processMessageForTest(late);
+    QVERIFY(!controller.companionState()["pending"].toBool());
+    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("error"));
+    QCOMPARE(controller.operationState("companion")["error"].toString(), QString("Companion không phản hồi"));
+}
+
+// 2026-10-14: without a Vehicle the first CC heard is the target (ADR-0001); a second system's CC is ignored.
+void CompanionControllerTest::_testFirstCompanionLocksWithoutVehicle()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    sendCompanionHeartbeat(controller, 5);
+    sendCompanionHeartbeat(controller, 6);
+    sendLinks(controller, 6, 57600, 115200);
+    QCOMPARE(controller.sourceSystemId(), 5);
+    QVERIFY(!controller.linksReceived());
+    QCOMPARE(sent.size(), 1); // the read the first heartbeat starts
+    mavlink_param_ext_request_list_t list{};
+    mavlink_msg_param_ext_request_list_decode(&sent.first(), &list);
+    QCOMPARE(list.target_system, uint8_t(5));
+}
+
+// 2026-10-14: a SET or APPLY that could not be sent was shown as sent and ended later with "Companion không phản hồi".
+void CompanionControllerTest::_testFailedSendEndsOperationAtOnce()
+{
+    CompanionController controller;
+    bool commandsFail = true;
+    bool allFail = false;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) {
+        return !allFail && !(commandsFail && m.msgid == MAVLINK_MSG_ID_COMMAND_LONG);
+    });
+    const uint8_t sys = 1;
+    primeLinksAndParams(controller, sys);
+    QVERIFY(controller.setLinkConfig(0, "ttyUSB0", 57600));
+    ackParamSet(controller, sys, "CC_L0_BAUD", 57600u); // the APPLY goes out now, and fails
+    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("error"));
+    QCOMPARE(controller.operationState("companion")["error"].toString(), QString("Không gửi được tới Companion"));
+
+    primeLinksAndParams(controller, sys); // answers the read the failed op started
+    allFail = true;
+    QVERIFY(!controller.setLinkConfig(0, "ttyUSB0", 57600)); // its first SET is not sent: nothing started
+    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("error"));
+    QCOMPARE(controller.companionState()["linkError"].toString(), QString("Không gửi được tới Companion"));
+}
+
+// 2026-10-14: the CC's COMMAND_ACK (IN_PROGRESS keepalives of a long APPLY) no longer kept the telemetry watchdog alive.
+void CompanionControllerTest::_testCompanionAckRestartsWatchdog()
+{
+    CompanionController controller;
+    QVERIFY(!controller._telemetryWatchdog->isActive());
+    mavlink_message_t ack{};
+    mavlink_msg_command_ack_pack(1, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50, 0, 0, 0);
+    controller.processMessageForTest(ack);
+    QVERIFY(controller._telemetryWatchdog->isActive());
 }
 
 // 2026-10-13: the stream ON/OFF half of this test went with CC_CAM_FPV_EN/PUB_EN; the readback, link and hotspot halves stay.
-void CompanionVehicleLifecycleTest::_testReadbackLinkHotspotAndVehicleCancel()
+// 2026-10-14: renamed from _testReadbackLinkHotspotAndVehicleCancel: its tail now asserts the op outlives the Vehicle.
+void CompanionVehicleLifecycleTest::_testReadbackLinkHotspotAndOpOutlivesVehicle()
 {
     CompanionController controller;
     _connectMockLinkNoInitialConnectSequence();
@@ -1453,4 +1520,76 @@ void CompanionVehicleLifecycleTest::_testMessageProcessedOnce()
     mockLink()->respondWithMavlinkMessage(message);
     QTRY_VERIFY_WITH_TIMEOUT(cameraChanged.count() >= 1, 2000);
     QCOMPARE(cameraChanged.count(), 1);
+}
+
+// 2026-10-14: two drones on one network: QGC locked onto the first CC it heard, not the active Vehicle's, and sent it the link change.
+void CompanionVehicleLifecycleTest::_testOtherSystemCompanionGetsNoConfig()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const uint8_t own = vehicle()->id();
+    const uint8_t other = own + 1;
+    primeLinksAndParams(controller, other, mockLink()); // another drone's CC is heard first
+    const int sets = mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET);
+    QVERIFY(!controller.setLinkConfig(1, "ttyUSB1", 57600));
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), sets);
+    QCOMPARE(controller.sourceSystemId(), -1);
+
+    primeLinksAndParams(controller, own, mockLink()); // the Vehicle's own CC
+    QCOMPARE(controller.sourceSystemId(), int(own));
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600));
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_PARAM_EXT_SET), sets + 1, 3000);
+    mavlink_message_t set{};
+    QVERIFY(mockLink()->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_PARAM_EXT_SET, set));
+    QCOMPARE(mavlink_msg_param_ext_set_get_target_system(&set), own);
+}
+
+// 2026-10-14: a CC locked while there was no Vehicle stayed the target when another system's Vehicle became active.
+void CompanionVehicleLifecycleTest::_testOtherVehicleResetsCompanionLock()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    const uint8_t other = 42;
+    primeLinksAndParams(controller, other); // no Vehicle: the first CC heard locks
+    QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600));
+    ackParamSet(controller, other, "CC_L1_BAUD", 57600u);
+    mavlink_message_t ack{};
+    mavlink_msg_command_ack_pack(other, 191, &ack, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_ACCEPTED, 0, 0, 0, 0);
+    controller.processMessageForTest(ack); // the op now waits for telemetry
+    QVERIFY(controller.companionState()["pending"].toBool());
+    const int epoch = controller.ccSessionEpoch();
+
+    _connectMockLinkNoInitialConnectSequence();
+    QVERIFY(vehicle()->id() != other);
+    QCOMPARE(controller.sourceSystemId(), -1);
+    QVERIFY(controller.ccSessionEpoch() > epoch);
+    QVERIFY(!controller.companionState()["pending"].toBool());
+    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("error"));
+
+    sendCompanionHeartbeat(controller, other); // that CC may not lock again while this Vehicle is active
+    QCOMPARE(controller.sourceSystemId(), -1);
+    sendCompanionHeartbeat(controller, vehicle()->id());
+    QCOMPARE(controller.sourceSystemId(), int(vehicle()->id()));
+}
+
+// 2026-10-14: a replacing mode SET that could not be sent ends inside beginToolbarOperation; the replaced op goes on and
+// still ends on CC silence (the failed send had stopped its silence timer).
+void CompanionVehicleLifecycleTest::_testReplaceNotSentKeepsOldOp()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    const auto system = vehicle()->id();
+    bool fail = false;
+    controller.setSendHookForTest([&](const mavlink_message_t&) { return !fail; });
+    primeStreamMode(controller, system, 1);
+    QVERIFY(controller.setStreamMode(2));
+    ackParamSet(controller, system, "CC_STREAM_MODE", 1u, PARAM_ACK_IN_PROGRESS);
+    fail = true;
+    QVERIFY(!controller.setStreamMode(0));
+    const auto state = controller.streamModeState();
+    QVERIFY(state["modeOperation"].toBool());
+    QCOMPARE(state["pendingMode"].toInt(), 2);
+    QVERIFY(state["operation"].toMap()["active"].toBool());
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("stream")["outcome"].toString(), QString("unconfirmed"), 1500);
 }
