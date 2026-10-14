@@ -115,6 +115,7 @@ option(QGC_NO_SERIAL_LINK "Disable serial port communication" OFF)
 # ============================================================================
 
 option(QGC_ENABLE_GST_VIDEOSTREAMING "Enable GStreamer video backend" ON)
+set(QGC_ANDROID_GSTREAMER_SDK_ROOT "" CACHE PATH "Android GStreamer SDK containing per-ABI directories")
 
 # ============================================================================
 # MAVLink Configuration
