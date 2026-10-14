@@ -341,6 +341,15 @@ bool runLinkApplyToAccepted(CompanionController& c, uint8_t system, QList<mavlin
         return c.operationState("companion")["outcome"].toString() == QLatin1String("confirmed"); }, 2000);
 }
 
+// A second links APPLY (link 0 to /dev/ttyUSB0 @ 57600) sent: SETs ACKed, COMMAND_LONG out, no reply from the CC yet.
+bool startLinkApply(CompanionController& c, QList<mavlink_message_t>& sent)
+{
+    sent.clear();
+    if (!c.setLinkConfig(0, "/dev/ttyUSB0", 57600)) return false;
+    ackAllSets(c, 1, sent);
+    return commandSent(sent);
+}
+
 // Hotspot APPLY sent; the CC's first reply IN_PROGRESS `progress` (35: AP restarting), none when negative.
 bool startHotspotApply(CompanionController& c, QList<mavlink_message_t>& sent, uint8_t system = 1,
                        const QString& password = QString(), int progress = 35)
@@ -943,7 +952,7 @@ void CompanionControllerTest::_testApplyWithoutReceiptReadbackIsUnconfirmed()
 }
 
 // 2026-10-14: a failed links APPLY leaves the CC's active links as they were, so the change applied before it is still
-// unsaved; QGC hid Lưu and a reboot reverted it silently. Cancelling a wait does not save anything either.
+// unsaved; QGC hid Lưu and a reboot reverted it silently.
 void CompanionControllerTest::_testFailedLinkApplyKeepsEarlierUnsaved()
 {
     CompanionController controller;
@@ -963,23 +972,85 @@ void CompanionControllerTest::_testFailedLinkApplyKeepsEarlierUnsaved()
     primeParam(controller, 1, "CC_L0_PORT", QString("/dev/ttyAMA4")); // the CC resynced its stage; answers the re-read
     primeParam(controller, 1, "CC_L0_BAUD", 921600u);
 
-    sent.clear();
-    QVERIFY(controller.setLinkConfig(0, "/dev/ttyUSB0", 57600));
-    ackAllSets(controller, 1, sent);
-    QVERIFY(commandSent(sent));
-    sendCommandAck(controller, 1, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50);
-    controller.setReceivedAgeForTest("heartbeat", 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(controller.companionState()["waitingReconnect"].toBool(), 2000);
-    controller.cancelCompanionWait();
-    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("unconfirmed"));
-    QVERIFY(controller.companionState()["unsaved"].toBool());
-
     sendCompanionHeartbeat(controller, 1);
     QVERIFY(controller.saveCompanionGroup("links"));
     mavlink_command_long_t cmd{};
     mavlink_msg_command_long_decode(&sent.last(), &cmd);
     QCOMPARE(cmd.command, static_cast<uint16_t>(MAV_CMD_THACO_SAVE_DEFAULT_CONFIG));
     QCOMPARE(cmd.param1, 1.0f);
+}
+
+// 2026-10-14: after a confirmed links APPLY, a later one cancelled while waiting still offered Lưu; SAVE would persist the
+// candidate the CC may be running (a bad baud surviving a reboot). Only a confirmed APPLY offers it again.
+// (Replaces the cancel half of _testFailedLinkApplyKeepsEarlierUnsaved, which asserted Lưu stayed offered.)
+void CompanionControllerTest::_testCancelledLinkApplyBlocksSave()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    QVERIFY(runLinkApplyToAccepted(controller, 1, sent, 1, "SIYI", "/dev/ttyAMA0", 57600));
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+
+    QVERIFY(startLinkApply(controller, sent));
+    sendCommandAck(controller, 1, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50);
+    controller.setReceivedAgeForTest("heartbeat", 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller.companionState()["waitingReconnect"].toBool(), 2000);
+    controller.cancelCompanionWait();
+    QCOMPARE(controller.operationState("companion")["outcome"].toString(), QString("unconfirmed"));
+    sendCompanionHeartbeat(controller, 1);
+    QVERIFY(!controller.companionState()["unsaved"].toBool());
+    QVERIFY(!controller.saveCompanionGroup("links"));
+
+    sendSerialLink(controller, 1, 0, 2, "FC", "/dev/ttyAMA4", 921600); // the CC's link telemetry and parameters after the loss
+    sendSerialLink(controller, 1, 1, 2, "SIYI", "/dev/ttyAMA0", 57600);
+    primeParam(controller, 1, "CC_L0_PORT", QString("/dev/ttyUSB0")); // its stage still holds the cancelled candidate
+    primeParam(controller, 1, "CC_L0_BAUD", 57600u);
+    primeParam(controller, 1, "CC_L1_PORT", QString("/dev/ttyAMA0"));
+    primeParam(controller, 1, "CC_L1_BAUD", 57600u);
+    sent.clear();
+    QVERIFY(runLinkApplyToAccepted(controller, 1, sent, 0, "FC", "/dev/ttyAMA4", 921600)); // another value for link 0, confirmed
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+    QVERIFY(controller.saveCompanionGroup("links"));
+}
+
+// 2026-10-14: a links APPLY that no IN_PROGRESS proved received, ended "unconfirmed" by the readback, left the earlier
+// confirmed change savable and so the unproven candidate with it.
+void CompanionControllerTest::_testUnconfirmedLinkApplyBlocksSave()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    QVERIFY(runLinkApplyToAccepted(controller, 1, sent, 1, "SIYI", "/dev/ttyAMA0", 57600));
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+
+    QVERIFY(startLinkApply(controller, sent)); // no IN_PROGRESS: nothing proves the CC got it
+    controller._clearTelemetryState();
+    QVERIFY(controller.companionState()["waitingReconnect"].toBool());
+    sendCompanionHeartbeat(controller, 1);
+    primeParam(controller, 1, "CC_L0_PORT", QString("/dev/ttyUSB0"));
+    primeParam(controller, 1, "CC_L0_BAUD", 57600u);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["outcome"].toString(), QString("unconfirmed"), 3000);
+    QVERIFY(!controller.companionState()["unsaved"].toBool());
+    QVERIFY(!controller.saveCompanionGroup("links"));
+}
+
+// 2026-10-14: a links APPLY the CC never answered (not a refusal) ended "error" and left the earlier confirmed change
+// savable, with the candidate the CC may be running.
+void CompanionControllerTest::_testSilentLinkApplyBlocksSave()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    QVERIFY(runLinkApplyToAccepted(controller, 1, sent, 1, "SIYI", "/dev/ttyAMA0", 57600));
+    QVERIFY(controller.companionState()["unsaved"].toBool());
+
+    QVERIFY(startLinkApply(controller, sent));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.operationState("companion")["error"].toString(), QString("Companion không phản hồi"), 3000);
+    QVERIFY(!controller.companionState()["unsaved"].toBool());
+    QVERIFY(!controller.saveCompanionGroup("links"));
 }
 
 // 2026-10-14: a failed or unconfirmed hotspot APPLY leaves its candidate active on the CC (no rollback); SAVE would

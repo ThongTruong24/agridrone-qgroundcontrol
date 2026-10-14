@@ -35,6 +35,9 @@ private slots:
     void _testAcceptedApplyReadbackConfirms();
     void _testApplyWithoutReceiptReadbackIsUnconfirmed();
     void _testFailedLinkApplyKeepsEarlierUnsaved();
+    void _testCancelledLinkApplyBlocksSave();
+    void _testUnconfirmedLinkApplyBlocksSave();
+    void _testSilentLinkApplyBlocksSave();
     void _testFailedHotspotApplyBlocksSave();
     void _testPendingStageOfAnotherLinkRidesAlong();
     void _testStreamPopupWithoutVehicle();

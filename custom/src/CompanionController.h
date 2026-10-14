@@ -440,6 +440,7 @@ private:
         bool expectCancelAck{false};     // a replaced mode operation: the CC answers it before the new one's first IN_PROGRESS
         bool applySent{false};
         bool resultSeen{false};
+        bool refused{false};             // the CC answered the command with a refusal: its active config is unchanged
         bool unconfirmedOnTimeout{false};
         int lastApplyProgress{-1};       // >= 0: the CC's first reply to the APPLY came, so it has the command
         QString lastText;                // last STATUSTEXT of the operation's group
@@ -456,7 +457,7 @@ private:
     QMap<QString, QVariantMap> _lastOperation;
     QMap<QString, QString> _toolbarErrors;
     QMap<QString, bool> _unsaved;    // links/hotspot: an APPLY was confirmed and not saved yet
-    QMap<QString, bool> _saveBlocked; // hotspot: a later APPLY failed or was not confirmed, its candidate may be active
+    QMap<QString, bool> _saveBlocked; // a later APPLY was not confirmed, or the hotspot one failed: its candidate may be active
     int _lastCompanionSystemId{-1};  // the CC locked last; _unsaved/_saveBlocked describe it and survive a lock reset
     uint8_t _systemStatus{0};        // CC_TELEMETRY_SYSTEM.system_status (CC_SYS_STATUS bits)
 

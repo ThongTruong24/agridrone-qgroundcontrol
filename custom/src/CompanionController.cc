@@ -826,7 +826,7 @@ QVariantMap CompanionController::companionState() const
     const bool locked = configLocked();
     return {{"connected", heartbeat}, {"pending", bool(_toolbarOperation)}, {"fresh", fresh}, {"linkError", _toolbarErrors.value("links")}, {"name", fresh ? _companionName : QString()},
         {"cpuUsage", fresh ? QVariant(_cpuUsage) : QVariant()}, {"cpuTemp", fresh ? QVariant(_cpuTemp) : QVariant()},
-        {"locked", locked}, {"lockReason", lockReason(locked)}, {"unsaved", _unsaved.value("links")},
+        {"locked", locked}, {"lockReason", lockReason(locked)}, {"unsaved", _unsaved.value("links") && !_saveBlocked.value("links")},
         {"waitingReconnect", _toolbarOperation && _toolbarOperation->waitingReconnect}};
 }
 
@@ -1082,6 +1082,7 @@ void CompanionController::onApplyResult(uint8_t result, bool noResponse)
     }
     op.resultSeen = true;
     if (result != MAV_RESULT_ACCEPTED) {
+        op.refused = true;
         settleWaitingSteps("error");
         QString reason = op.lastText;
         if (reason.isEmpty()) {
@@ -1325,9 +1326,10 @@ void CompanionController::recordApplyOutcome(bool confirmed)
     // Only for the CC the APPLY went to: another CC locked since has its own state (cleared when it locked).
     if (op.command != MAV_CMD_THACO_APPLY_CONFIG || op.systemId != _sourceSystemId) return;
     if (confirmed) { _unsaved[op.group] = true; _saveBlocked.remove(op.group); }
-    // No hotspot rollback: a failed or unconfirmed candidate may be what the CC runs now, and SAVE would persist it.
-    // A failed links APPLY leaves the active links as they were, so what was applied before can still be saved.
-    else if (op.group == QLatin1String("hotspot")) _saveBlocked[op.group] = true;
+    // No rollback: an unconfirmed, cancelled or unanswered candidate may be what the CC runs now, and SAVE would persist it.
+    // A hotspot candidate stays active after a refusal too. A refused links APPLY leaves the active links as they were,
+    // so what was applied before can still be saved.
+    else if (op.group == QLatin1String("hotspot") || !op.refused) _saveBlocked[op.group] = true;
 }
 
 void CompanionController::failOperationByTimeout(const QString& reason)
