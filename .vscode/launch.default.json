@@ -17,7 +17,7 @@
       "externalConsole": false,
       "name": "Launch QGroundControl",
       "preLaunchTask": "CMake: Build",
-      "program": "${workspaceFolder}/build/Debug/QGroundControl",
+      "program": "${workspaceFolder}/build/Debug/AgriDroneGCS",
       "request": "launch",
       "setupCommands": [
         {
@@ -38,7 +38,7 @@
       },
       "name": "Launch QGroundControl (LLDB)",
       "preLaunchTask": "CMake: Build",
-      "program": "${workspaceFolder}/build/Debug/QGroundControl",
+      "program": "${workspaceFolder}/build/Debug/AgriDroneGCS",
       "request": "launch",
       "type": "lldb"
     },
@@ -52,7 +52,7 @@
       "externalConsole": false,
       "name": "Run Unit Tests (Debug)",
       "preLaunchTask": "CMake: Build",
-      "program": "${workspaceFolder}/build/Debug/QGroundControl",
+      "program": "${workspaceFolder}/build/Debug/AgriDroneGCS",
       "request": "launch",
       "setupCommands": [
         {
@@ -74,7 +74,7 @@
       "externalConsole": false,
       "name": "Debug Specific Test",
       "preLaunchTask": "CMake: Build",
-      "program": "${workspaceFolder}/build/Debug/QGroundControl",
+      "program": "${workspaceFolder}/build/Debug/AgriDroneGCS",
       "request": "launch",
       "setupCommands": [
         {
@@ -90,7 +90,7 @@
       "MIMode": "gdb",
       "name": "Attach to QGroundControl",
       "processId": "${command:pickProcess}",
-      "program": "${workspaceFolder}/build/Debug/QGroundControl",
+      "program": "${workspaceFolder}/build/Debug/AgriDroneGCS",
       "request": "attach",
       "setupCommands": [
         {

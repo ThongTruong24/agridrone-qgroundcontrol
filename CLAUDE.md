@@ -13,17 +13,19 @@ This file adds what is specific to this fork: the THACO **AgriDrone** custom bui
 
 ```bash
 cmake --build build --config Debug --parallel                                       # incremental build
-LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe ./build/Debug/QGroundControl        # run (software GL under WSL)
+LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe ./build/Debug/AgriDroneGCS        # run (software GL under WSL)
 # Do not judge video quality in the WSL build: WSL2's monotonic clock runs ~7% slow (2026-10-14), so the clock-synced
 # sink falls behind and rtspsrc drop-on-latency drops packets -> macroblocking/lag. Use native Windows QGC, VLC or the SIYI handheld.
 
 ctest --test-dir build -R CompanionControllerTest --output-on-failure               # one test via CTest
-./build/Debug/QGroundControl --unittest:CompanionControllerTest                     # one test via the binary
-./build/Debug/QGroundControl --unittest --label=Unit                                # by label
-QGC_TEST_VERBOSE=1 ./build/Debug/QGroundControl --unittest:CompanionVehicleLifecycleTest
+./build/Debug/AgriDroneGCS --unittest:CompanionControllerTest                     # one test via the binary
+./build/Debug/AgriDroneGCS --unittest --label=Unit                                # by label
+QGC_TEST_VERBOSE=1 ./build/Debug/AgriDroneGCS --unittest:CompanionVehicleLifecycleTest
 ```
 
-Tests are compiled into the QGroundControl binary (needs `QGC_BUILD_TESTING`). See test/README.md for base classes and `MultiSignalSpy`.
+The app is renamed `AgriDroneGCS` / `com.agridrone.gcs` (ADR-0008); settings saved under the old `QGroundControl` name do not carry over.
+
+Tests are compiled into the AgriDroneGCS binary (needs `QGC_BUILD_TESTING`). See test/README.md for base classes and `MultiSignalSpy`.
 
 ## How the custom build plugs into QGC
 
