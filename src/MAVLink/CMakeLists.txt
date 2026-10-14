@@ -35,6 +35,8 @@ if(QGC_THACO_MAVLINK)
     set(mavlink_SOURCE_DIR "${THACO_MAVLINK_SOURCE}")
     set(mavlink_BINARY_DIR "${CMAKE_BINARY_DIR}/thaco-mavlink")
     thaco_add_mavlink(mavlink "${QGC_MAVLINK_DIALECT}" C "${mavlink_BINARY_DIR}/include/mavlink")
+    # File-level input of the generators below: a target in DEPENDS alone never reruns them after an XML change.
+    set(_qgc_mavlink_stamp "${mavlink_BINARY_DIR}/include/mavlink/.mavlink-build.json")
 else()
 CPMAddPackage(
     NAME mavlink
@@ -69,7 +71,7 @@ add_custom_command(
     OUTPUT "${MAVLINK_ENUMS_H}" "${MAVLINK_ENUMS_QML_H}" "${MAVLINK_ENUMS_QML_CC}"
     COMMAND Python3::Interpreter "${MAVLINK_ENUMS_GENERATOR}" "${mavlink_BINARY_DIR}/include/mavlink"
             "${MAVLINK_ENUMS_H}" "${MAVLINK_ENUMS_QML_H}" "${MAVLINK_ENUMS_QML_CC}"
-    DEPENDS mavlink "${MAVLINK_ENUMS_GENERATOR}"
+    DEPENDS mavlink ${_qgc_mavlink_stamp} "${MAVLINK_ENUMS_GENERATOR}"
     COMMENT "Generating MAVLinkEnums.h + MAVLinkEnumsQml.{h,cc}"
     VERBATIM
 )
@@ -95,7 +97,7 @@ add_custom_command(
     OUTPUT "${MAVLINK_INSTANCE_FIELDS_H}"
     COMMAND Python3::Interpreter "${MAVLINK_INSTANCE_FIELDS_GENERATOR}"
             "${MAVLINK_XML_DIR}" "${QGC_MAVLINK_DIALECT}" "${MAVLINK_INSTANCE_FIELDS_H}"
-    DEPENDS mavlink "${MAVLINK_INSTANCE_FIELDS_GENERATOR}"
+    DEPENDS mavlink ${_qgc_mavlink_stamp} "${MAVLINK_INSTANCE_FIELDS_GENERATOR}"
     COMMENT "Generating MAVLinkInstanceFields.h"
     VERBATIM
 )
