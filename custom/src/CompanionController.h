@@ -118,41 +118,10 @@ class CompanionController : public QObject
     Q_PROPERTY(quint32 uap0TxKb READ uap0TxKb NOTIFY networkChanged)
     Q_PROPERTY(int dnsmasqStatus READ dnsmasqStatus NOTIFY networkChanged)
 
-    // Links Properties (delegated to CompanionLinksService)
-    Q_PROPERTY(int fcBaud READ fcBaud NOTIFY linksChanged)
-    Q_PROPERTY(int siyiBaud READ siyiBaud NOTIFY linksChanged)
-    Q_PROPERTY(QString fcPort READ fcPort NOTIFY linksChanged)
-    Q_PROPERTY(QString siyiPort READ siyiPort NOTIFY linksChanged)
-    Q_PROPERTY(int fcStatus READ fcStatus NOTIFY linksChanged)
-    Q_PROPERTY(int siyiStatus READ siyiStatus NOTIFY linksChanged)
-    Q_PROPERTY(float fcBitrateKbps READ fcBitrateKbps NOTIFY linksChanged)
-    Q_PROPERTY(float fcPacketDropRate READ fcPacketDropRate NOTIFY linksChanged)
-    Q_PROPERTY(float siyiBitrateKbps READ siyiBitrateKbps NOTIFY linksChanged)
-    Q_PROPERTY(float siyiPacketDropRate READ siyiPacketDropRate NOTIFY linksChanged)
-    Q_PROPERTY(quint32 fcBytesRx READ fcBytesRx NOTIFY linksChanged)
-    Q_PROPERTY(quint32 fcBytesTx READ fcBytesTx NOTIFY linksChanged)
-    Q_PROPERTY(quint32 siyiBytesRx READ siyiBytesRx NOTIFY linksChanged)
-    Q_PROPERTY(quint32 siyiBytesTx READ siyiBytesTx NOTIFY linksChanged)
-    Q_PROPERTY(int siyiLinkQuality READ siyiLinkQuality NOTIFY linksChanged)
+    // Links (CompanionLinksService): per link in serialLinks
     Q_PROPERTY(int linkStatusFlags READ linkStatusFlags NOTIFY linksChanged)
 
-    // Channel Rates & Stats for FC
-    Q_PROPERTY(float fcTxRate READ fcTxRate NOTIFY linksChanged)
-    Q_PROPERTY(float fcRxRate READ fcRxRate NOTIFY linksChanged)
-    Q_PROPERTY(float fcTxRateMax READ fcTxRateMax NOTIFY linksChanged)
-    Q_PROPERTY(float fcTxRateMulti READ fcTxRateMulti NOTIFY linksChanged)
-    Q_PROPERTY(float fcRxLoss READ fcRxLoss NOTIFY linksChanged)
-    Q_PROPERTY(quint32 fcTxErr READ fcTxErr NOTIFY linksChanged)
-
-    // Channel Rates & Stats for SIYI
-    Q_PROPERTY(float siyiTxRate READ siyiTxRate NOTIFY linksChanged)
-    Q_PROPERTY(float siyiRxRate READ siyiRxRate NOTIFY linksChanged)
-    Q_PROPERTY(float siyiTxRateMax READ siyiTxRateMax NOTIFY linksChanged)
-    Q_PROPERTY(float siyiTxRateMulti READ siyiTxRateMulti NOTIFY linksChanged)
-    Q_PROPERTY(float siyiRxLoss READ siyiRxLoss NOTIFY linksChanged)
-    Q_PROPERTY(quint32 siyiTxErr READ siyiTxErr NOTIFY linksChanged)
-
-    // Transport Protocol & Dynamic Ports from CC
+    // Transport Protocol & the CC's serial ports (CC_SER_PORTS)
     Q_PROPERTY(QString transportProtocol READ transportProtocol NOTIFY linksChanged)
     Q_PROPERTY(QStringList availablePorts READ availablePorts NOTIFY availablePortsChanged)
     Q_PROPERTY(bool vehicleAvailable READ vehicleAvailable NOTIFY vehicleAvailableChanged)
@@ -251,39 +220,12 @@ public:
     bool ccParametersLoading() const { return _paramService ? _paramService->isLoading() : false; }
 
     // Links Getters (delegated to CompanionLinksService)
-    int fcBaud() const { return _linksService ? _linksService->fcBaud() : 0; }
-    int siyiBaud() const { return _linksService ? _linksService->siyiBaud() : 0; }
-    QString fcPort() const { return _linksService ? _linksService->fcPort() : QString(); }
-    QString siyiPort() const { return _linksService ? _linksService->siyiPort() : QString(); }
-    int fcStatus() const { return _linksService ? _linksService->fcStatus() : 0; }
-    int siyiStatus() const { return _linksService ? _linksService->siyiStatus() : 0; }
-    float fcBitrateKbps() const { return _linksService ? _linksService->fcBitrateKbps() : 0.0f; }
-    float fcPacketDropRate() const { return _linksService ? _linksService->fcPacketDropRate() : 0.0f; }
-    float siyiBitrateKbps() const { return _linksService ? _linksService->siyiBitrateKbps() : 0.0f; }
-    float siyiPacketDropRate() const { return _linksService ? _linksService->siyiPacketDropRate() : 0.0f; }
-    quint32 fcBytesRx() const { return _linksService ? _linksService->fcBytesRx() : 0; }
-    quint32 fcBytesTx() const { return _linksService ? _linksService->fcBytesTx() : 0; }
-    quint32 siyiBytesRx() const { return _linksService ? _linksService->siyiBytesRx() : 0; }
-    quint32 siyiBytesTx() const { return _linksService ? _linksService->siyiBytesTx() : 0; }
-    int siyiLinkQuality() const { return _linksService ? _linksService->siyiLinkQuality() : 0; }
     int linkStatusFlags() const { return _linksService ? _linksService->linkStatusFlags() : 0; }
-
-    float fcTxRate() const { return _linksService ? _linksService->fcTxRate() : 0.0f; }
-    float fcRxRate() const { return _linksService ? _linksService->fcRxRate() : 0.0f; }
-    float fcTxRateMax() const { return _linksService ? _linksService->fcTxRateMax() : 0.0f; }
-    float fcTxRateMulti() const { return _linksService ? _linksService->fcTxRateMulti() : 0.0f; }
-    float fcRxLoss() const { return _linksService ? _linksService->fcRxLoss() : 0.0f; }
-    quint32 fcTxErr() const { return _linksService ? _linksService->fcTxErr() : 0; }
-
-    float siyiTxRate() const { return _linksService ? _linksService->siyiTxRate() : 0.0f; }
-    float siyiRxRate() const { return _linksService ? _linksService->siyiRxRate() : 0.0f; }
-    float siyiTxRateMax() const { return _linksService ? _linksService->siyiTxRateMax() : 0.0f; }
-    float siyiTxRateMulti() const { return _linksService ? _linksService->siyiTxRateMulti() : 0.0f; }
-    float siyiRxLoss() const { return _linksService ? _linksService->siyiRxLoss() : 0.0f; }
-    quint32 siyiTxErr() const { return _linksService ? _linksService->siyiTxErr() : 0; }
-
     QString transportProtocol() const { return _linksService ? _linksService->transportProtocol() : QStringLiteral("Serial / UART"); }
-    QStringList availablePorts() const { return _linksService ? _linksService->availablePorts() : QStringList(); }
+    /// The serial ports the CC found at boot (CC_SER_PORTS); empty until the CC reports it.
+    QStringList availablePorts() const;
+    /// The baud choices of link `index`: the catalog's options of CC_L<index>_BAUD; empty for a link the CC has not described.
+    Q_INVOKABLE QStringList baudOptions(int index) const;
 
     // System Getters
     int cpuUsage() const { return _cpuUsage; }
@@ -350,7 +292,6 @@ public:
     int  sourceSystemId()   const { return _sourceSystemId; }
     int  sourceComponentId()const { return _sourceComponentId; }
 
-    QVariantMap ccTelemetryLinks() const;
     QVariantMap ccTelemetryCamera() const;
     QVariantMap ccTelemetryNetwork() const;
     QVariantMap ccTelemetryVision() const;
@@ -406,6 +347,12 @@ private:
     void toolbarTimedOut();
     void endUnconfirmed(const QString& note);
     void recordApplyOutcome(bool confirmed);
+    /// The APPLY-only rule of beginToolbarOperation: true when the group's last APPLY was not confirmed, a fresh link whose
+    /// stage (or the request for it in `candidate`) differs from its telemetry, or a fresh AP (`ap`) shows another config than
+    /// `candidate`. The differing link values join `candidate`, the other links' names `rideAlong`. nullopt: a stage is unread.
+    /// Also companionState/hotspotState "needsApply": the same values would still send an APPLY.
+    std::optional<bool> applyPending(const QString& group, QMap<QString, QVariant>& candidate, const QVariantMap& ap,
+                                     QStringList* rideAlong = nullptr) const;
     bool modeOperationPending() const;
     QString modeBlockedReason() const;
     bool refuseStream(const QString& why);

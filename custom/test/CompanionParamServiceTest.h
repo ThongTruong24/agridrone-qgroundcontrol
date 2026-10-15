@@ -24,4 +24,6 @@ private slots:
     void _testEditorFactOrderAndStagedSubsystems();
     void _testRequestGoesToTransportWithoutVehicle();
     void _testFailedRequestSendDoesNotLoad();
+    void _testNoValueBeforeCompanionAnswers();
+    void _testCatalogLoadErrorHasNoParameters();
 };

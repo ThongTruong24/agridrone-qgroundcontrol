@@ -17,42 +17,11 @@ void CompanionLinksService::resetState()
     _indexedLinks.clear();
     _receivedAt.clear();
     _hasLinksTelemetry = false;
-    _fcBaud = 0;
-    _siyiBaud = 0;
-    _fcPort.clear();
-    _siyiPort.clear();
     _transportProtocol = QStringLiteral("Serial / UART");
-    _fcStatus = 0;
-    _siyiStatus = 0;
-    _fcBitrateKbps = 0.0f;
-    _fcPacketDropRate = 0.0f;
-    _fcBytesRx = 0;
-    _fcBytesTx = 0;
-    _siyiBytesRx = 0;
-    _siyiBytesTx = 0;
-    _siyiLinkQuality = 0;
     _linkStatusFlags = 0;
-
-    _fcTxRate = 0.0f;
-    _fcRxRate = 0.0f;
-    _fcTxRateMax = 0.0f;
-    _fcTxRateMulti = 0.0f;
-    _fcRxLoss = 0.0f;
-    _fcTxErr = 0;
-
-    _siyiTxRate = 0.0f;
-    _siyiRxRate = 0.0f;
-    _siyiTxRateMax = 0.0f;
-    _siyiTxRateMulti = 0.0f;
-    _siyiRxLoss = 0.0f;
-    _siyiTxErr = 0;
-
-    _availablePorts.clear();
-    _prevFcStatus = -1;
-    _prevSiyiStatus = -1;
+    _prevStatus.clear();
 
     emit linksChanged();
-    emit availablePortsChanged();
 }
 
 bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& message)
@@ -81,62 +50,21 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
     for (auto it = _indexedLinks.begin(); lnk.link_count > 0 && it != _indexedLinks.end();) {
         if (it.key() >= lnk.link_count) {
             _receivedAt.remove(it.key());
+            _prevStatus.remove(it.key());
             it = _indexedLinks.erase(it);
         } else {
             ++it;
         }
     }
 
-    if (lnk.link_index == 0) {
-        _fcBaud = static_cast<int>(lnk.baudrate);
-        _fcPort = portStr;
-        _fcStatus = lnk.status;
-        _fcTxRate = lnk.tx_rate;
-        _fcRxRate = lnk.rx_rate;
-        _fcRxLoss = lnk.rx_loss;
-        _fcTxErr = lnk.rx_errors;
-        _fcBytesRx = lnk.rx_bytes;
-        _fcBytesTx = lnk.tx_bytes;
-        _fcBitrateKbps = (_fcRxRate * 8.0f) / 1000.0f;
-        _fcPacketDropRate = _fcRxLoss;
-
-        if (_fcStatus != _prevFcStatus) {
-            emit logMessage(QStringLiteral("FC"), QStringLiteral("INFO"),
-                             QStringLiteral("[EVENT] FC Link Status -> %1 (%2@%3 bps)")
-                                 .arg(_fcStatus == 2 ? "ONLINE" : (_fcStatus == 1 ? "STANDBY" : "OFFLINE"))
-                                 .arg(_fcPort).arg(_fcBaud),
-                             _fcStatus == 2 ? 6 : 4);
-            _prevFcStatus = _fcStatus;
-        }
-    } else if (lnk.link_index == 1) {
-        _siyiBaud = static_cast<int>(lnk.baudrate);
-        _siyiPort = portStr;
-        _siyiStatus = lnk.status;
-        _siyiTxRate = lnk.tx_rate;
-        _siyiRxRate = lnk.rx_rate;
-        _siyiRxLoss = lnk.rx_loss;
-        _siyiTxErr = lnk.rx_errors;
-        _siyiBytesRx = lnk.rx_bytes;
-        _siyiBytesTx = lnk.tx_bytes;
-        _siyiBitrateKbps = (_siyiRxRate * 8.0f) / 1000.0f;
-        _siyiPacketDropRate = _siyiRxLoss;
-        _siyiLinkQuality = (_siyiRxLoss < 100.0f) ? static_cast<int>(100.0f - _siyiRxLoss) : 0;
-
-        if (_siyiStatus != _prevSiyiStatus) {
-            emit logMessage(QStringLiteral("SIYI"), QStringLiteral("INFO"),
-                             QStringLiteral("[EVENT] SIYI Link Status -> %1 (%2@%3 bps)")
-                                 .arg(_siyiStatus == 2 ? "ONLINE" : (_siyiStatus == 1 ? "STANDBY" : "OFFLINE"))
-                                 .arg(_siyiPort).arg(_siyiBaud),
-                             _siyiStatus == 2 ? 6 : 4);
-            _prevSiyiStatus = _siyiStatus;
-        }
-    }
-
-    if (!portStr.isEmpty()) {
-        if (!_availablePorts.contains(portStr)) {
-            _availablePorts.append(portStr);
-            emit availablePortsChanged();
-        }
+    if (_prevStatus.value(lnk.link_index, -1) != lnk.status) {
+        emit logMessage(linkName, QStringLiteral("INFO"),
+                        QStringLiteral("[EVENT] %1 link -> %2 (%3@%4 bps)")
+                            .arg(linkName, lnk.status == 2 ? QStringLiteral("ONLINE") : lnk.status == 1 ? QStringLiteral("STANDBY")
+                                                                                         : QStringLiteral("OFFLINE"),
+                                 portStr, QString::number(lnk.baudrate)),
+                        lnk.status == 2 ? 6 : 4);
+        _prevStatus[lnk.link_index] = lnk.status;
     }
 
     emit linksChanged();

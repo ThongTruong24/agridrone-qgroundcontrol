@@ -60,6 +60,7 @@ QString stageText(int subsystem, int progress)
 }
 
 QString lockReason(bool locked) { return locked ? QObject::tr("Companion đang khóa cấu hình (máy bay ARM)") : QString(); }
+QString catalogError() { return QObject::tr("Chưa tải được danh sách tham số Companion"); }
 
 // The AP telemetry (hotspotState) shows the candidate's SSID, address and DHCP; the passphrase is never compared.
 bool apShows(const QVariantMap& active, const QMap<QString, QVariant>& candidate)
@@ -106,10 +107,10 @@ CompanionController::CompanionController(QObject* parent)
         emit toolbarStateChanged();
         emit vehicleConnectedChanged();
     });
-    connect(_linksService, &CompanionLinksService::availablePortsChanged, this, &CompanionController::availablePortsChanged);
     connect(_paramService, &CompanionParamService::paramListChanged, this, [this]() {
         syncPlayerToMode();
         checkReadbackAfterReconnect();
+        emit availablePortsChanged(); // CC_SER_PORTS is a parameter
         emit toolbarStateChanged();
     });
     connect(_paramService, &CompanionParamService::isLoadingChanged, this, &CompanionController::ccParametersLoadingChanged);
@@ -662,23 +663,15 @@ CompanionController::~CompanionController() = default;
 // New public API + test helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-QVariantMap CompanionController::ccTelemetryLinks() const
+QStringList CompanionController::availablePorts() const
 {
-    QVariantMap m;
-    if (!_linksService) return m;
-    m[QStringLiteral("fc_baudrate")]    = static_cast<qulonglong>(_linksService->fcBaud());
-    m[QStringLiteral("siyi_baudrate")]  = static_cast<qulonglong>(_linksService->siyiBaud());
-    m[QStringLiteral("fc_bytes_rx")]    = static_cast<qulonglong>(_linksService->fcBytesRx());
-    m[QStringLiteral("fc_bytes_tx")]    = static_cast<qulonglong>(_linksService->fcBytesTx());
-    m[QStringLiteral("fc_tx_rate")]     = _linksService->fcTxRate();
-    m[QStringLiteral("fc_status")]      = _linksService->fcStatus();
-    m[QStringLiteral("siyi_status")]    = _linksService->siyiStatus();
-    m[QStringLiteral("fc_port")]        = _linksService->fcPort();
-    m[QStringLiteral("siyi_port")]      = _linksService->siyiPort();
-    const QString proto = _linksService->transportProtocol();
-    m[QStringLiteral("transport_type")] = (proto == QStringLiteral("UDP")) ? 2
-                                        : (proto == QStringLiteral("TCP")) ? 3 : 1;
-    return m;
+    const auto value = _paramService->confirmedValue(QStringLiteral("CC_SER_PORTS"));
+    return value.isValid() ? value.toString().split(',', Qt::SkipEmptyParts) : QStringList(); // milestone B: metadata enum
+}
+
+QStringList CompanionController::baudOptions(int index) const
+{
+    return _paramService->options(QStringLiteral("CC_L%1_BAUD").arg(index)); // shortcut: bundled json until milestone B
 }
 
 QVariantMap CompanionController::ccTelemetryCamera() const
@@ -831,6 +824,7 @@ QVariantMap CompanionController::streamReason(const QString& stream) const
     if (age > 3500) return r(4, tr("Không nhận telemetry %1, lần cuối %2 s trước").arg(label).arg(age / 1000));
     const int version = _streamTelemetry.value(stream).value("version").toInt();
     if (version != 1) return r(5, tr("%1 trên Companion là bản cũ (config_version %2), cần cập nhật").arg(label).arg(version));
+    if (_paramService->loadError()) return r(7, catalogError());
     if (_paramService->isLoading()) return r(6, tr("Đang tải tham số Companion…"));
     if (!_paramService->confirmedValue(camera ? "CC_CAM_RES" : "CC_VIS_RES").isValid()) return r(7, tr("%1 chưa trả tham số cấu hình").arg(label));
     // Camera and Vision are outside the arming lock (2026-10-13), so there is no "armed" reason (code 8) any more.
@@ -843,22 +837,31 @@ QVariantMap CompanionController::companionState() const
     const bool heartbeat = _toolbarReceived.contains("heartbeat") && _toolbarClock.elapsed() - _toolbarReceived.value("heartbeat") <= 3500;
     const bool fresh = _toolbarReceived.contains("system") && _toolbarClock.elapsed() - _toolbarReceived.value("system") <= 3500;
     const bool locked = configLocked();
+    QMap<QString, QVariant> stage; // no request: each link's stage on the CC
     return {{"connected", heartbeat}, {"pending", bool(_toolbarOperation)}, {"fresh", fresh}, {"linkError", _toolbarErrors.value("links")}, {"name", fresh ? _companionName : QString()},
         {"cpuUsage", fresh ? QVariant(_cpuUsage) : QVariant()}, {"cpuTemp", fresh ? QVariant(_cpuTemp) : QVariant()},
         {"locked", locked}, {"lockReason", lockReason(locked)}, {"unsaved", _unsaved.value("links") && !_saveBlocked.value("links")},
-        {"waitingReconnect", _toolbarOperation && _toolbarOperation->waitingReconnect}};
+        {"waitingReconnect", _toolbarOperation && _toolbarOperation->waitingReconnect},
+        {"needsApply", applyPending("links", stage, {}).value_or(false)}, {"loadError", _paramService->loadError() ? catalogError() : QString()}};
 }
 
 QVariantMap CompanionController::hotspotState() const
 {
     const bool fresh = _toolbarReceived.contains("network") && _toolbarClock.elapsed() - _toolbarReceived.value("network") <= 3500;
-    return {{"available", fresh && _networkConfigVersion == 1}, {"fresh", fresh},
+    QVariantMap state{{"available", fresh && _networkConfigVersion == 1}, {"fresh", fresh},
         {"wifiName", fresh ? _wlan0Ssid : QString()}, {"wifiConnected", fresh && _wlan0Status == CC_NET_STATUS_UP},
         {"ssid", fresh ? _apSsid : QString()}, {"open", fresh && _apStatus == CC_NET_STATUS_UP},
         {"ipCidr", fresh ? _apIp + "/" + QString::number(_apPrefixLength) : QString()},
         {"dhcpEnabled", fresh && _apDhcpEnabled}, {"pending", _toolbarOperation && _toolbarOperation->group == "hotspot"},
         {"error", _toolbarErrors.value("hotspot")}, {"operation", operationState("companion")},
         {"locked", configLocked()}, {"lockReason", lockReason(configLocked())}, {"unsaved", _unsaved.value("hotspot") && !_saveBlocked.value("hotspot")}};
+    // The CC's stage as the request: an APPLY for it is still due when the AP shows another config (or SAVE is blocked).
+    // Not read yet: an operation would only re-read it, so nothing is due.
+    QMap<QString, QVariant> stage;
+    for (const auto* id : {"CC_AP_SSID", "CC_AP_IP", "CC_AP_DHCP"}) stage[id] = _paramService->confirmedValue(id);
+    const bool read = std::all_of(stage.cbegin(), stage.cend(), [](const QVariant& value) { return value.isValid(); });
+    state["needsApply"] = read && applyPending("hotspot", stage, state).value_or(false);
+    return state;
 }
 
 namespace {
@@ -882,39 +885,16 @@ QString publishUrlError(const QString& input)
 bool CompanionController::beginToolbarOperation(const QString& group, const QList<QPair<QString, QVariant>>& values, int subsystem,
                                                 const QString& origin, const QStringList& skippedNotes)
 {
-    if (_paramService->isLoading() || _toolbarOperation || !companionState().value("connected").toBool() ||
+    if (_paramService->loadError() || _paramService->isLoading() || _toolbarOperation || !companionState().value("connected").toBool() ||
         _sourceComponentId != kCompanionCompId || (_activeVehicle && _activeVehicle->id() != _sourceSystemId) ||
         (!streamGroup(group) && configLocked())) return false;
     ToolbarOperation op;
     op.group = group; op.subsystem = subsystem; op.epoch = _ccSessionEpoch; op.systemId = _sourceSystemId;
     for (const auto &entry : values) op.effectCandidate[entry.first] = entry.second;
-    // Still waiting to be applied: an APPLY of this group that was not confirmed, or a stage the CC runs differently.
-    bool pending = _saveBlocked.value(group);
-    if (subsystem == 1) {
-        // APPLY applies every link value the CC has staged, so another link's stage that differs from its telemetry (a lost
-        // APPLY, a half-sent stage) goes along and must be confirmed too. There is no reconcile step (spec §3).
-        for (const auto& item : serialLinks()) {
-            const auto link = item.toMap();
-            const auto prefix = QString("CC_L%1_").arg(link.value("index").toInt());
-            if (!_paramService->allFactNames().contains(prefix + "PORT")) continue; // the CC has no parameters for this link
-            const bool edited = op.effectCandidate.contains(prefix + "PORT"); // what this operation asks for, set or staged
-            bool differs = false;
-            for (const auto &field : {QPair<QString, QString>{"BAUD", "baudrate"}, {"PORT", "port"}}) {
-                const auto configured = edited ? op.effectCandidate.value(prefix + field.first) : _paramService->confirmedValue(prefix + field.first);
-                if (!configured.isValid()) { _paramService->requestParameters(); return false; }
-                // shortcut: a link without fresh telemetry cannot be compared and is left out; upgrade if the CC stops reporting one
-                if (link.value("fresh").toBool() && configured.toString() != link.value(field.second).toString()) {
-                    op.effectCandidate[prefix + field.first] = configured;
-                    differs = true;
-                }
-            }
-            if (differs && !edited) op.steps.append({"info", tr("Kèm theo: %1 đang chờ áp dụng").arg(link.value("name").toString()), "done", 0});
-            pending = pending || differs;
-        }
-    } else if (subsystem == 3) {
-        const auto active = hotspotState();
-        pending = pending || (active.value("fresh").toBool() && !apShows(active, op.effectCandidate));
-    }
+    QStringList rideAlong;
+    const auto pending = applyPending(group, op.effectCandidate, subsystem == 3 ? hotspotState() : QVariantMap(), &rideAlong);
+    if (!pending) { _paramService->requestParameters(); return false; }
+    for (const auto& name : rideAlong) op.steps.append({"info", tr("Kèm theo: %1 đang chờ áp dụng").arg(name), "done", 0});
     QMap<QString, QVariant> anticipated;
     for (const auto& entry : values) {
         auto confirmed = anticipated.contains(entry.first) ? anticipated.value(entry.first) : _paramService->confirmedValue(entry.first);
@@ -924,7 +904,7 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
             op.values.append(entry); op.previous[entry.first] = confirmed; anticipated[entry.first] = entry.second;
         }
     }
-    if (op.values.isEmpty() && !pending) return true; // nothing to set and nothing left to apply
+    if (op.values.isEmpty() && !*pending) return true; // nothing to set and nothing left to apply
     op.origin = origin.isEmpty() ? (streamGroup(group) ? QStringLiteral("stream") : QStringLiteral("companion")) : origin;
     op.startedMs = _toolbarClock.elapsed();
     for (const auto& note : skippedNotes) op.steps.append({"info", note, "skipped", 0});
@@ -934,6 +914,38 @@ bool CompanionController::beginToolbarOperation(const QString& group, const QLis
     publishOperation(QString());
     advanceToolbarOperation();
     return _toolbarOperation.has_value(); // false: its first SET could not be sent, the op already ended
+}
+
+std::optional<bool> CompanionController::applyPending(const QString& group, QMap<QString, QVariant>& candidate, const QVariantMap& ap,
+                                                      QStringList* rideAlong) const
+{
+    // Still waiting to be applied: an APPLY of this group that was not confirmed, or a stage the CC runs differently.
+    bool pending = _saveBlocked.value(group);
+    if (group == QLatin1String("links")) {
+        // APPLY applies every link value the CC has staged, so another link's stage that differs from its telemetry (a lost
+        // APPLY, a half-sent stage) goes along and must be confirmed too. There is no reconcile step (spec §3).
+        for (const auto& item : serialLinks()) {
+            const auto link = item.toMap();
+            const auto prefix = QString("CC_L%1_").arg(link.value("index").toInt());
+            if (!_paramService->allFactNames().contains(prefix + "PORT")) continue; // the CC has no parameters for this link
+            const bool edited = candidate.contains(prefix + "PORT"); // what this operation asks for, set or staged
+            bool differs = false;
+            for (const auto &field : {QPair<QString, QString>{"BAUD", "baudrate"}, {"PORT", "port"}}) {
+                const auto configured = edited ? candidate.value(prefix + field.first) : _paramService->confirmedValue(prefix + field.first);
+                if (!configured.isValid()) return std::nullopt; // not read yet
+                // shortcut: a link without fresh telemetry cannot be compared and is left out; upgrade if the CC stops reporting one
+                if (link.value("fresh").toBool() && configured.toString() != link.value(field.second).toString()) {
+                    candidate[prefix + field.first] = configured;
+                    differs = true;
+                }
+            }
+            if (differs && !edited && rideAlong) rideAlong->append(link.value("name").toString());
+            pending = pending || differs;
+        }
+    } else if (group == QLatin1String("hotspot")) {
+        pending = pending || (ap.value("fresh").toBool() && !apShows(ap, candidate));
+    }
+    return pending;
 }
 
 void CompanionController::advanceToolbarOperation()

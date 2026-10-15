@@ -62,6 +62,10 @@ public:
     // ITelemetryHandler interface
     bool handleMavlinkMessage(const mavlink_message_t& message) override;
     void resetState() override;
+    /// The bundled catalog; tests load another file. No values or defaults: each value comes from the CC (spec §6).
+    void loadTemplate(const QString& path = QStringLiteral(":/custom/params/cc_parameters.json"));
+    /// The catalog did not load: there are no parameters, and nothing can be configured.
+    bool loadError() const { return _loadError; }
 
     QVariantList paramList() const;
     bool isLoading() const { return _isLoading; }
@@ -72,7 +76,6 @@ public:
     void requestParameters();
     void stageParameter(const QString& name, const QVariant& value);
     void resetParameter(const QString& name);
-    void resetToDefault(const QString& name);
     void resetAllModified();
     /// Sends PARAM_EXT_SET for every modified parameter and returns the names it sent (their ACKs arrive via parameterSaved).
     QStringList saveModifiedParameters();
@@ -92,6 +95,8 @@ public:
 
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
     bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
+    bool isReadOnly(const QString& name) const { return _meta.value(name).readOnly; }
+    QStringList options(const QString& name) const { return _meta.value(name).options; }
     QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
     /// confirmedValue() is invalid again until the CC reports the parameter anew.
     void forgetConfirmed(const QString& name) { _isLiveSynced[name] = false; }
@@ -110,7 +115,6 @@ private slots:
     void _onLoadingTimeout();
 
 private:
-    void _loadTemplate();
     void _syncFacts();
     QMap<QString, Fact*> _facts;
     void _updateModifiedCount();
@@ -118,6 +122,7 @@ private:
     void _encodeValue(const QVariant& val, uint8_t type, char* outRaw) const;
 
     bool _isLoading = false;
+    bool _loadError = false;
     int _modifiedCount = 0;
     uint16_t _expectedCount = 0;
     uint16_t _receivedCount = 0;

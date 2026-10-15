@@ -2,6 +2,7 @@
 
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
+#include <QtQuick/QQuickItem>
 #include <QtGui/QWindow>
 #include <QtTest/QSignalSpy>
 #include <QtCore/QElapsedTimer>
@@ -261,6 +262,15 @@ void sendCompanionText(CompanionController& c, uint8_t system, const char* text)
     c.processMessageForTest(m);
 }
 
+// The port link 0 reports ("" when the CC reports no link 0).
+QString linkPort(const CompanionController& c)
+{
+    for (const auto& link : c.serialLinks()) {
+        if (link.toMap()["index"].toInt() == 0) return link.toMap()["port"].toString();
+    }
+    return QString();
+}
+
 QStringList stepTexts(const QVariantMap& operation)
 {
     QStringList out;
@@ -409,15 +419,17 @@ void CompanionControllerTest::_testGeneratedMessageDecoding()
     packLinksForTest(42, 191, &message, 921600, 115200, 123456, 654321, 88.5F, 3, "ttyUSB0", "ttyUSB1", &siyiMsg);
     controller.processMessageForTest(message);
     controller.processMessageForTest(siyiMsg);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_baudrate")).toULongLong(), 921600ULL);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("siyi_baudrate")).toULongLong(), 115200ULL);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_bytes_rx")).toULongLong(), 123456ULL);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_bytes_tx")).toULongLong(), 654321ULL);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_tx_rate")).toFloat(), 88.5F);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_status")).toInt(), 3);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("ttyUSB0"));
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("siyi_port")).toString(), QStringLiteral("ttyUSB1"));
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("transport_type")).toInt(), 1);
+    // 2026-10-14: links are read per index from serialLinks(); the FC/SIYI map (with byte counters and a fixed
+    // transport type nothing showed) is gone.
+    const auto links = controller.serialLinks();
+    QCOMPARE(links.size(), 2);
+    QCOMPARE(links.at(0).toMap()["baudrate"].toUInt(), 921600u);
+    QCOMPARE(links.at(1).toMap()["baudrate"].toUInt(), 115200u);
+    QCOMPARE(links.at(0).toMap()["txRate"].toFloat(), 88.5F);
+    QCOMPARE(links.at(0).toMap()["status"].toInt(), 3);
+    QCOMPARE(links.at(0).toMap()["port"].toString(), QStringLiteral("ttyUSB0"));
+    QCOMPARE(links.at(1).toMap()["port"].toString(), QStringLiteral("ttyUSB1"));
+    QCOMPARE(links.at(1).toMap()["name"].toString(), QStringLiteral("SIYI"));
     QVERIFY(controller.linksReceived());
     QVERIFY(linksChangedSpy.count() >= 1);
 
@@ -514,11 +526,11 @@ void CompanionControllerTest::_testSourceFiltering()
     packLinksForTest(42, 191, &message, 57600, 115200, 10, 20, 2.5F, 1, "primary", "camera");
     controller.processMessageForTest(message);
     QCOMPARE(controller.sourceComponentId(), 191);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("primary"));
+    QCOMPARE(linkPort(controller), QStringLiteral("primary"));
 
     packLinksForTest(42, 192, &message, 9600, 9600, 99, 99, 1.0F, 0, "wrong", "wrong");
     controller.processMessageForTest(message);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("primary"));
+    QCOMPARE(linkPort(controller), QStringLiteral("primary"));
 
     controller.resetForTest();
     controller.processMessageForTest(message);
@@ -545,7 +557,7 @@ void CompanionControllerTest::_testStaleAndReset()
     QVERIFY(!controller.linksReceived());
     QVERIFY(!controller.linksStale());
     QCOMPARE(controller.sourceSystemId(), -1);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QString());
+    QCOMPARE(linkPort(controller), QString());
 }
 
 // 2026-10-14: CC messages reach the controller only through MAVLinkProtocol (the Vehicle's copy is gone), the reset
@@ -561,11 +573,11 @@ void CompanionVehicleLifecycleTest::_testDisconnectAndReconnectReset()
     packLinksForTest(vehicle()->id(), 191, &message, 921600, 115200, 10, 20, 4.5F, 3, "first", "siyi");
     controller.processMessageForTest(message);
     QVERIFY(controller.linksReceived());
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("first"));
+    QCOMPARE(linkPort(controller), QStringLiteral("first"));
 
     packLinksForTest(vehicle()->id() + 1, 191, &message, 9600, 9600, 1, 1, 0.0F, 0, "wrong", "wrong");
     controller.processMessageForTest(message);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("first"));
+    QCOMPARE(linkPort(controller), QStringLiteral("first"));
 
     _disconnectMockLink();
     QVERIFY(!controller.vehicleAvailable());
@@ -580,7 +592,7 @@ void CompanionVehicleLifecycleTest::_testDisconnectAndReconnectReset()
     packLinksForTest(vehicle()->id(), 191, &message, 57600, 57600, 30, 40, 1.5F, 1, "second", "siyi2");
     controller.processMessageForTest(message);
     QCOMPARE(controller.sourceComponentId(), 191);
-    QCOMPARE(controller.ccTelemetryLinks().value(QStringLiteral("fc_port")).toString(), QStringLiteral("second"));
+    QCOMPARE(linkPort(controller), QStringLiteral("second"));
 
     sendCompanionHeartbeat(controller, vehicle()->id());
     const int session = controller.ccSessionEpoch();
@@ -2404,4 +2416,257 @@ void CompanionVehicleLifecycleTest::_testCancelDuringLockResetBlocksSave()
     QVERIFY(runLinkApplyToAccepted(controller, system, sent)); // the same candidate again, confirmed
     QVERIFY(controller.companionState()["unsaved"].toBool());
     QVERIFY(controller.saveCompanionGroup("links"));
+}
+
+// 2026-10-14: the port list is the CC's boot scan (CC_SER_PORTS), not the ports links already use.
+void CompanionControllerTest::_testAvailablePortsFromCompanion()
+{
+    CompanionController controller;
+    controller.setSendHookForTest([](const mavlink_message_t&) { return true; });
+    QSignalSpy portsSpy(&controller, &CompanionController::availablePortsChanged);
+    sendCompanionHeartbeat(controller, 1);
+    sendSerialLink(controller, 1, 0, 2, "FC", "/dev/ttyAMA4", 921600);
+    sendSerialLink(controller, 1, 1, 2, "SIYI", "/dev/ttyAMA0", 115200);
+    QVERIFY(controller.availablePorts().isEmpty()); // the CC has not reported its list yet
+    portsSpy.clear();
+    primeParam(controller, 1, "CC_SER_PORTS", QString("/dev/ttyAMA4,/dev/ttyAMA0,/dev/ttyUSB0"));
+    QCOMPARE(controller.availablePorts(), (QStringList{"/dev/ttyAMA4", "/dev/ttyAMA0", "/dev/ttyUSB0"}));
+    QVERIFY(portsSpy.count() >= 1);
+}
+
+// 2026-10-14: the popup's baud list was an array in the QML; it is the catalog's options of that link's CC_L<n>_BAUD
+// (milestone B: the CC's metadata), and a link the CC has not described has none.
+void CompanionControllerTest::_testBaudOptionsFromCatalog()
+{
+    CompanionController controller;
+    controller.setSendHookForTest([](const mavlink_message_t&) { return true; });
+    QVERIFY(controller.baudOptions(0).contains("57600"));
+    QCOMPARE(controller.baudOptions(1), controller._paramService->options("CC_L1_BAUD"));
+    QVERIFY(controller.baudOptions(2).isEmpty());
+    sendCompanionHeartbeat(controller, 1);
+    primeParam(controller, 1, "CC_L2_BAUD", 38400u);
+    QCOMPARE(controller.baudOptions(2), controller.baudOptions(0));
+}
+
+// 2026-10-15: the popup's Update button was disabled for the current values, so a SAVE block or a lost APPLY could not be
+// retried from it; needsApply says when the same values would still send an APPLY (the beginToolbarOperation rule).
+void CompanionControllerTest::_testNeedsApplyMatchesApplyOnlyRule()
+{
+    CompanionController controller;
+    controller.setSendHookForTest([](const mavlink_message_t&) { return true; });
+    primeCompanionWithoutVehicle(controller, 1);
+    primeHotspot(controller, 1);
+    QVERIFY(!controller.companionState()["needsApply"].toBool());
+    QVERIFY(!controller.hotspotState()["needsApply"].toBool());
+
+    controller._saveBlocked["links"] = true; // the last links APPLY was not confirmed
+    QVERIFY(controller.companionState()["needsApply"].toBool());
+    QVERIFY(!controller.hotspotState()["needsApply"].toBool());
+    controller._saveBlocked.remove("links");
+    primeParam(controller, 1, "CC_L0_PORT", QString("/dev/ttyUSB0")); // staged; the link telemetry still shows the old port
+    QVERIFY(controller.companionState()["needsApply"].toBool());
+
+    controller._saveBlocked["hotspot"] = true;
+    QVERIFY(controller.hotspotState()["needsApply"].toBool());
+    controller._saveBlocked.remove("hotspot");
+    QVERIFY(!controller.hotspotState()["needsApply"].toBool());
+    readBackCandidateHotspot(controller); // staged; the AP still shows "Existing"
+    QVERIFY(controller.hotspotState()["needsApply"].toBool());
+}
+
+// 2026-10-14: without the parameter catalog QGC fell back to a built-in table of links; now nothing is configurable and
+// both popups say why.
+void CompanionControllerTest::_testCatalogLoadErrorBlocksCompanion()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    controller._paramService->loadTemplate(QStringLiteral(":/missing/cc_parameters.json"));
+    primeCompanionWithoutVehicle(controller, 1);
+    sendStreamTelemetry(controller, 1, true, true, 2);
+    primeParam(controller, 1, "CC_CAM_RES", QString("1280x720"));
+    const QString text = QStringLiteral("Chưa tải được danh sách tham số Companion");
+    QCOMPARE(controller.companionState()["loadError"].toString(), text);
+    QCOMPARE(controller.streamReason("camera")["code"].toInt(), 7);
+    QCOMPARE(controller.streamReason("camera")["text"].toString(), text);
+    sent.clear();
+    QVERIFY(!controller.setLinkConfig(0, "/dev/ttyUSB0", 57600));
+    QVERIFY(!controller.setStreamParameter("camera", "CC_CAM_FPS", 15));
+    QCOMPARE(countSent(sent, MAVLINK_MSG_ID_PARAM_EXT_SET), 0);
+}
+
+namespace {
+// The Companion popup bound to the engine's CompanionController singleton, which is returned in `controller`.
+std::unique_ptr<QObject> loadCompanionPage(QQmlEngine& engine, CompanionController*& controller)
+{
+    engine.addImageProvider(QLatin1String(ColoredSvgImageProvider::ProviderId), new ColoredSvgImageProvider());
+    engine.addImportPath("qrc:/qml");
+    QQmlComponent component(&engine);
+    component.setData(R"QML(
+import QtQuick
+import QGroundControl
+import Custom.AgriDrone
+Item {
+    property var controller: CompanionController
+    property alias page: companionPage
+    CompanionStatusPage { id: companionPage; expanded: true }
+}
+)QML", QUrl("qrc:/qml/companion-page-test.qml"));
+    if (!component.isReady()) qWarning() << component.errorString();
+    std::unique_ptr<QObject> root(component.create());
+    controller = root ? qobject_cast<CompanionController*>(root->property("controller").value<QObject*>()) : nullptr;
+    return root;
+}
+
+// findChild() misses Repeater delegates (no QObject parent), so the visual item tree is walked too.
+QObject* findItem(QObject* parent, const QString& name)
+{
+    if (!parent || parent->objectName() == name) return parent;
+    QObjectList children = parent->children();
+    if (auto* item = qobject_cast<QQuickItem*>(parent)) {
+        for (QQuickItem* child : item->childItems()) children.append(child);
+    }
+    for (QObject* child : std::as_const(children)) {
+        if (QObject* found = findItem(child, name)) return found;
+    }
+    return nullptr;
+}
+
+QStringList comboTexts(QObject* combo)
+{
+    QStringList texts;
+    for (int i = 0; combo && i < combo->property("count").toInt(); ++i) {
+        QString text;
+        QMetaObject::invokeMethod(combo, "textAt", Q_RETURN_ARG(QString, text), Q_ARG(int, i));
+        texts << text;
+    }
+    return texts;
+}
+}  // namespace
+
+// 2026-10-14: the Companion popup required a Vehicle (writeAllowed), so with the FC silent no link could be changed; its
+// ports, bauds and lock text now all come from the CC.
+void CompanionControllerTest::_testCompanionPopupWithoutVehicle()
+{
+    QQmlEngine engine;
+    CompanionController* controller = nullptr;
+    auto root = loadCompanionPage(engine, controller);
+    QVERIFY(root && controller);
+    controller->setSendHookForTest([](const mavlink_message_t&) { return true; });
+    auto page = root->property("page").value<QObject*>();
+    QVERIFY(page);
+    auto blocked = page->findChild<QObject*>("companionBlockedText");
+    QVERIFY(blocked);
+    QVERIFY(!page->property("writeAllowed").toBool());
+    QCOMPARE(blocked->property("text").toString(), QString("Mất kết nối tới Companion"));
+
+    primeCompanionWithoutVehicle(*controller, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(page->property("writeAllowed").toBool(), 2000);
+    QVERIFY(!blocked->property("visible").toBool());
+    QObject* port0 = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((port0 = findItem(page, "portCombo0")), 2000);
+    QVERIFY(port0->property("enabled").toBool());
+    // The CC's boot list; the port another link uses is shown with its owner; "Tắt" switches the link off.
+    QCOMPARE(comboTexts(port0), (QStringList{"/dev/ttyAMA4", "/dev/ttyAMA0 (dùng bởi SIYI)", "/dev/ttyUSB0", "Tắt"}));
+    QCOMPARE(port0->property("currentText").toString(), QString("/dev/ttyAMA4"));
+    auto baud0 = findItem(page, "baudCombo0");
+    QVERIFY(baud0);
+    QCOMPARE(comboTexts(baud0), controller->baudOptions(0));
+    QCOMPARE(baud0->property("currentText").toString(), QString("921600"));
+
+    // Choosing a port another link uses is refused with its owner's name; the selection stays.
+    QMetaObject::invokeMethod(port0, "activated", Q_ARG(int, 1));
+    QCOMPARE(page->property("localError").toString(), QString("Cổng đang được dùng bởi SIYI"));
+    QCOMPARE(port0->property("currentText").toString(), QString("/dev/ttyAMA4"));
+
+    // A port absent at boot stays shown as the current value only, marked.
+    sendSerialLink(*controller, 1, 1, 2, "SIYI", "/dev/ttyUSB7", 115200);
+    QObject* port1 = findItem(page, "portCombo1");
+    QVERIFY(port1);
+    QTRY_COMPARE_WITH_TIMEOUT(comboTexts(port1), (QStringList{"/dev/ttyAMA4 (dùng bởi FC)", "/dev/ttyAMA0", "/dev/ttyUSB0",
+                                                              "/dev/ttyUSB7 (không có)", "Tắt"}), 2000);
+    QCOMPARE(port1->property("currentText").toString(), QString("/dev/ttyUSB7 (không có)"));
+
+    // Locked by the CC: the text is the CC's reason.
+    sendSystemStatus(*controller, 1, CC_SYS_STATUS_CONFIG_LOCKED);
+    QTRY_VERIFY_WITH_TIMEOUT(!page->property("writeAllowed").toBool(), 2000);
+    QVERIFY(blocked->property("visible").toBool());
+    QCOMPARE(blocked->property("text").toString(), controller->companionState()["lockReason"].toString());
+    QVERIFY(!port0->property("enabled").toBool());
+
+    // No parameter catalog: nothing is configurable, and the popup says so.
+    sendSystemStatus(*controller, 1, 0);
+    controller->_paramService->loadTemplate(QStringLiteral(":/missing/cc_parameters.json"));
+    QTRY_COMPARE_WITH_TIMEOUT(blocked->property("text").toString(), QString("Chưa tải được danh sách tham số Companion"), 2000);
+    QVERIFY(!page->property("writeAllowed").toBool());
+}
+
+// 2026-10-14: the popup had no Save and no way out of the reconnect wait, and Update stayed disabled for the current
+// values, so a confirmed change could not be saved and a SAVE block could not be lifted from the UI.
+void CompanionControllerTest::_testCompanionPopupSaveCancelAndRetry()
+{
+    QQmlEngine engine;
+    CompanionController* controller = nullptr;
+    auto root = loadCompanionPage(engine, controller);
+    QVERIFY(root && controller);
+    QList<mavlink_message_t> sent;
+    controller->setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    auto page = root->property("page").value<QObject*>();
+    QVERIFY(page);
+    primeCompanionWithoutVehicle(*controller, 1);
+    auto save = page->findChild<QObject*>("saveLinks");
+    auto cancel = page->findChild<QObject*>("cancelCompanionWait");
+    auto unsavedNote = page->findChild<QObject*>("linksUnsavedNote");
+    QVERIFY(save && cancel && unsavedNote);
+    QVERIFY(!save->property("visible").toBool());
+    QVERIFY(!cancel->property("visible").toBool());
+
+    QVERIFY(runLinkApplyToAccepted(*controller, 1, sent));
+    QTRY_VERIFY_WITH_TIMEOUT(save->property("visible").toBool(), 2000);
+    QVERIFY(unsavedNote->property("visible").toBool());
+    QCOMPARE(unsavedNote->property("text").toString(), QString("Đã áp dụng, chưa lưu — reboot sẽ về cấu hình cũ"));
+    QVERIFY(save->property("enabled").toBool());
+    sent.clear();
+    QMetaObject::invokeMethod(save, "clicked");
+    QCOMPARE(countSent(sent, MAVLINK_MSG_ID_COMMAND_LONG), 1);
+    mavlink_command_long_t cmd{};
+    mavlink_msg_command_long_decode(&sent.last(), &cmd);
+    QCOMPARE(cmd.command, static_cast<uint16_t>(MAV_CMD_THACO_SAVE_DEFAULT_CONFIG));
+    QCOMPARE(cmd.param1, 1.0f);
+    sendCommandAck(*controller, 1, MAV_CMD_THACO_SAVE_DEFAULT_CONFIG, MAV_RESULT_ACCEPTED, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!save->property("visible").toBool(), 2000);
+
+    // A links APPLY that lost the CC waits; "Hủy chờ" ends the wait, unconfirmed.
+    sent.clear();
+    QVERIFY(controller->setLinkConfig(0, "/dev/ttyAMA4", 921600));
+    ackAllSets(*controller, 1, sent);
+    QVERIFY(commandSent(sent));
+    sendCommandAck(*controller, 1, MAV_CMD_THACO_APPLY_CONFIG, MAV_RESULT_IN_PROGRESS, 50);
+    controller->setReceivedAgeForTest("heartbeat", 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(cancel->property("visible").toBool(), 2000);
+    QMetaObject::invokeMethod(cancel, "clicked");
+    QCOMPARE(controller->operationState("companion")["outcome"].toString(), QString("unconfirmed"));
+    QTRY_VERIFY_WITH_TIMEOUT(!cancel->property("visible").toBool(), 2000);
+
+    // The CC is back with the link as before: Update for the same values reads "Áp dụng lại" and sends the APPLY again.
+    sendCompanionHeartbeat(*controller, 1);
+    sendSerialLink(*controller, 1, 0, 2, "FC", "/dev/ttyUSB0", 57600);
+    primeParam(*controller, 1, "CC_L0_PORT", QString("/dev/ttyUSB0")); // answers the re-read the heartbeat started
+    primeParam(*controller, 1, "CC_L0_BAUD", 57600u);
+    auto update = findItem(page, "updateLink0");
+    QVERIFY(update);
+    QTRY_VERIFY_WITH_TIMEOUT(update->property("enabled").toBool(), 2000);
+    QCOMPARE(update->property("text").toString(), QString("Áp dụng lại"));
+    sent.clear();
+    QMetaObject::invokeMethod(update, "clicked");
+    QVERIFY(commandSent(sent));
+    QCOMPARE(countSent(sent, MAVLINK_MSG_ID_PARAM_EXT_SET), 0);
+
+    // The hotspot panel has its own Save, shown while the hotspot change is unsaved.
+    auto saveHotspot = page->findChild<QObject*>("saveHotspot");
+    QVERIFY(saveHotspot);
+    QVERIFY(!saveHotspot->property("visible").toBool());
+    controller->_unsaved["hotspot"] = true;
+    emit controller->toolbarStateChanged();
+    QVERIFY(saveHotspot->property("visible").toBool());
 }

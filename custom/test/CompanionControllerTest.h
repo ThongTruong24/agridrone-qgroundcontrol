@@ -46,6 +46,12 @@ private slots:
     void _testRetryOfStagedLinkSendsApplyOnly();
     void _testUnchangedLinkRequestSendsNothing();
     void _testHotspotRetrySendsApplyOnly();
+    void _testAvailablePortsFromCompanion();
+    void _testBaudOptionsFromCatalog();
+    void _testNeedsApplyMatchesApplyOnlyRule();
+    void _testCatalogLoadErrorBlocksCompanion();
+    void _testCompanionPopupWithoutVehicle();
+    void _testCompanionPopupSaveCancelAndRetry();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
