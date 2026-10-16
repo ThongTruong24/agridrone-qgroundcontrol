@@ -11,6 +11,7 @@ private slots:
     void _testMissionAndLogFiltering();
     void _testConfigResponses();
     void _testAiVisionStateInvariant();
+    void _testAiVisionTransmissionWithoutVehicle();
     void _testAiVisionTrackPointGuards();
     void _testToolbarLegacyAndIndependentStreams();
     void _testGeneratedMessageDecoding();

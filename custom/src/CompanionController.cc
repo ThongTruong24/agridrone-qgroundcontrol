@@ -380,11 +380,17 @@ bool CompanionController::sendAiVisionTrackPoint(double normalizedX, double norm
 {
     if (!_boundingBoxEnabled || !std::isfinite(normalizedX) || !std::isfinite(normalizedY) ||
         !std::isfinite(normalizedRadius) || normalizedX < 0.0 || normalizedX > 1.0 || normalizedY < 0.0 ||
-        normalizedY > 1.0 || normalizedRadius < 0.0 || normalizedRadius > 1.0 || !_activeVehicle) {
+        normalizedY > 1.0 || normalizedRadius < 0.0 || normalizedRadius > 1.0) {
         return false;
     }
 
-    return Companion::sendTrackPoint(_activeVehicle.data(), normalizedX, normalizedY, normalizedRadius);
+    uint8_t targetSystem = _sourceSystemId > 0 ? static_cast<uint8_t>(_sourceSystemId) : 0;
+    if (_activeVehicle) {
+        targetSystem = static_cast<uint8_t>(_activeVehicle->id());
+    }
+    const auto companionLink = _activeVehicle ? SharedLinkInterfacePtr{} : _ccLink.lock();
+    return Companion::sendTrackPoint(_activeVehicle.data(), targetSystem, normalizedX, normalizedY, normalizedRadius,
+                                    companionLink);
 }
 
 void CompanionController::_logMavlink(const QString& category, const QString& direction, const QString& message,

@@ -7,15 +7,21 @@
 #include <QtTest/QSignalSpy>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
+#include <QtNetwork/QNetworkDatagram>
+#include <QtNetwork/QUdpSocket>
 #include <cstring>
 #include <limits>
 #include <memory>
 
 #include "ColoredSvgImageProvider.h"
 #include "CompanionController.h"
+#include "LinkManager.h"
 #include "MAVLinkProtocol.h"
 #include "MockLink.h"
+#include "MultiVehicleManager.h"
 #include "QGCMAVLink.h"
+#include "UDPLink.h"
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
 
@@ -2876,6 +2882,138 @@ void CompanionControllerTest::_testAiVisionStateInvariant()
     QVERIFY(!controller.trackingEnabled());
     QVERIFY(!controller.followingEnabled());
     QCOMPARE(changedSpy.count(), 4);
+}
+
+void CompanionControllerTest::_testAiVisionTransmissionWithoutVehicle()
+{
+    auto* const linkManager = LinkManager::instance();
+    QVERIFY(linkManager->links().isEmpty());
+    QVERIFY(!MultiVehicleManager::instance()->activeVehicle());
+
+    QQmlEngine engine;
+    engine.addImportPath("qrc:/qml");
+    QQmlComponent component(&engine,
+                            QUrl("qrc:/Custom/qml/QGroundControl/FlyView/OnScreenCameraTrackingController.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> cameraTracking(
+        component.createWithInitialProperties({{"camera", QVariant::fromValue<QObject*>(nullptr)},
+                                               {"width", 1000.0},
+                                               {"height", 800.0},
+                                               {"videoWidth", 800.0},
+                                               {"videoHeight", 400.0}}));
+    QVERIFY2(cameraTracking, qPrintable(component.errorString()));
+    auto* const singleton = engine.singletonInstance<CompanionController*>("QGC", "CompanionController");
+    QVERIFY(singleton);
+    CompanionController& controller = *singleton;
+    controller.setBoundingBoxEnabled(true);
+    controller.setFollowingEnabled(true);
+
+    QUdpSocket receiver;
+    QVERIFY(receiver.bind(QHostAddress(QHostAddress::LocalHost), 0));
+    QList<mavlink_message_t> received;
+    QList<mavlink_message_t> commands;
+    connect(&receiver, &QUdpSocket::readyRead, this, [&]() {
+        while (receiver.hasPendingDatagrams()) {
+            const QByteArray bytes = receiver.receiveDatagram().data();
+            // The UDP link also sends a partial-frame hole punch; parse each full-message datagram independently.
+            mavlink_message_t receiveBuffer{};
+            mavlink_status_t receiveStatus{};
+            for (const unsigned char byte : bytes) {
+                mavlink_message_t message{};
+                mavlink_status_t status{};
+                if (mavlink_frame_char_buffer(&receiveBuffer, &receiveStatus, byte, &message, &status) !=
+                    MAVLINK_FRAMING_OK) {
+                    continue;
+                }
+                if (message.msgid == MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) {
+                    received.append(message);
+                } else if (message.msgid == MAVLINK_MSG_ID_COMMAND_LONG) {
+                    commands.append(message);
+                }
+            }
+        }
+    });
+
+    auto udpConfig = std::make_shared<UDPConfiguration>(QStringLiteral("AI Vision without heartbeat"));
+    udpConfig->setDynamic(true);
+    udpConfig->setLocalPort(0);
+    udpConfig->addHost(QStringLiteral("127.0.0.1"), receiver.localPort());
+    SharedLinkConfigurationPtr config = udpConfig;
+    QVERIFY(linkManager->createConnectedLink(config));
+    const auto disconnectLink = qScopeGuard([&]() { linkManager->disconnectLink(config->link()); });
+    QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), 2000);
+
+    // No peer sends anything: the periodic control must work before any heartbeat or Vehicle.
+    QTRY_VERIFY_WITH_TIMEOUT(received.size() >= 2, 3000);
+    const auto verifyLastState = [&](quint8 boundingBox, quint8 tracking, quint8 following) {
+        const auto& message = received.last();
+        QCOMPARE(message.sysid, MAVLinkProtocol::instance()->getSystemId());
+        QCOMPARE(message.compid, MAVLinkProtocol::getComponentId());
+        mavlink_cc_ai_vision_control_t control{};
+        mavlink_msg_cc_ai_vision_control_decode(&message, &control);
+        QCOMPARE(control.bounding_box, boundingBox);
+        QCOMPARE(control.tracking, tracking);
+        QCOMPARE(control.following, following);
+    };
+    verifyLastState(1, 0, 1);
+
+    // Stop the timer so only the setting change can produce these messages.
+    controller._aiVisionControlTimer.stop();
+    received.clear();
+    controller.setTrackingEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!received.isEmpty(), 1000);
+    verifyLastState(1, 1, 1);
+
+    // A click on the displayed video sends normalized x/y/radius, even with camera=null and no heartbeat.
+    QVERIFY(QMetaObject::invokeMethod(cameraTracking.get(), "mouseClicked", Q_ARG(QVariant, 300.0),
+                                      Q_ARG(QVariant, 400.0)));
+    QTRY_COMPARE_WITH_TIMEOUT(commands.size(), 1, 1000);
+    const auto verifyLastPoint = [&](quint8 targetSystem) {
+        const auto& message = commands.last();
+        QCOMPARE(message.sysid, MAVLinkProtocol::instance()->getSystemId());
+        QCOMPARE(message.compid, MAVLinkProtocol::getComponentId());
+        mavlink_command_long_t command{};
+        mavlink_msg_command_long_decode(&message, &command);
+        QCOMPARE(command.command, MAV_CMD_CAMERA_TRACK_POINT);
+        QCOMPARE(command.target_system, targetSystem);
+        QCOMPARE(command.target_component, 191);
+        QCOMPARE(command.confirmation, 0);
+        QVERIFY(qAbs(command.param1 - 0.25F) <= 1e-6F);
+        QVERIFY(qAbs(command.param2 - 0.5F) <= 1e-6F);
+        QVERIFY(qAbs(command.param3 - 0.025F) <= 1e-6F);
+        QCOMPARE(command.param4, 0.0F);
+        QCOMPARE(command.param5, 0.0F);
+        QCOMPARE(command.param6, 0.0F);
+        QCOMPARE(command.param7, 0.0F);
+    };
+    verifyLastPoint(0);
+
+    // Letterbox clicks and invalid coordinates send nothing; periodic AI control must not resend the point.
+    QVERIFY(
+        QMetaObject::invokeMethod(cameraTracking.get(), "mouseClicked", Q_ARG(QVariant, 50.0), Q_ARG(QVariant, 400.0)));
+    QVERIFY(!controller.sendAiVisionTrackPoint(-0.01, 0.5, 0.1));
+    received.clear();
+    controller._aiVisionControlTimer.start();
+    QTRY_VERIFY_WITH_TIMEOUT(received.size() >= 2, 3000);
+    controller._aiVisionControlTimer.stop();
+    QCOMPARE(commands.size(), 1);
+    QVERIFY(!controller.vehicleAvailable());
+    QVERIFY(!controller.companionState().value("connected").toBool());
+
+    // Once a CC is known, target it on its heartbeat link without waiting for a Vehicle or parameter readback.
+    sendCompanionHeartbeat(controller, 42, config->link());
+    QVERIFY(QMetaObject::invokeMethod(cameraTracking.get(), "mouseClicked", Q_ARG(QVariant, 300.0),
+                                      Q_ARG(QVariant, 400.0)));
+    QTRY_COMPARE_WITH_TIMEOUT(commands.size(), 2, 1000);
+    verifyLastPoint(42);
+
+    received.clear();
+    controller.setBoundingBoxEnabled(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!received.isEmpty(), 1000);
+    verifyLastState(0, 0, 0);
+    QVERIFY(!controller.sendAiVisionTrackPoint(0.25, 0.5, 0.025));
+    QVERIFY(!controller.vehicleAvailable());
+    QVERIFY(!MultiVehicleManager::instance()->activeVehicle());
 }
 
 void CompanionControllerTest::_testAiVisionTrackPointGuards()
