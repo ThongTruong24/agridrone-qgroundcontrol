@@ -1,11 +1,7 @@
 #include "CompanionParamService.h"
 
-#include <QtCore/QPointer>
 #include "Fact.h"
 #include "MAVLinkProtocol.h"
-#include "MultiVehicleManager.h"
-#include "LinkManager.h"
-#include "VehicleLinkManager.h"
 
 #include <QtCore/QDebug>
 #include <QtCore/QFile>
@@ -13,6 +9,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonArray>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QDateTime>
 #include <QtCore/QTextStream>
 #include <cstring>
@@ -27,7 +24,7 @@ CompanionParamService::CompanionParamService(QObject* parent)
     _loadingTimeoutTimer->setInterval(6000); // 6s timeout for param stream
     connect(_loadingTimeoutTimer, &QTimer::timeout, this, &CompanionParamService::_onLoadingTimeout);
 
-    _loadTemplate();
+    loadTemplate();
     _syncFacts();
     connect(this, &CompanionParamService::paramListChanged, this, &CompanionParamService::_syncFacts);
 }
@@ -69,7 +66,7 @@ void CompanionParamService::_syncFacts()
     }
 }
 
-void CompanionParamService::_loadTemplate()
+void CompanionParamService::loadTemplate(const QString& path)
 {
     _groups.clear();
     _order.clear();
@@ -79,129 +76,82 @@ void CompanionParamService::_loadTemplate()
     _stagedValues.clear();
     _isModified.clear();
 
-    QFile file(":/custom/params/cc_parameters.json");
-    QByteArray data;
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        data = file.readAll();
-        file.close();
+    QFile file(path);
+    QJsonParseError err{};
+    const QJsonDocument doc = file.open(QIODevice::ReadOnly | QIODevice::Text) ? QJsonDocument::fromJson(file.readAll(), &err)
+                                                                              : QJsonDocument();
+    // No built-in fallback: a missing or broken catalog leaves no parameters, and the popups say so.
+    _loadError = err.error != QJsonParseError::NoError || !doc.isObject();
+    if (_loadError) {
+        emit logMessage("PARAM", "ERR", QString("Cannot load the CC parameter catalog %1: %2").arg(path,
+                        file.error() != QFileDevice::NoError ? file.errorString() : err.errorString()), 3);
     } else {
-        // Fallback to local filesystem path if running in tests / pre-qrc
-        QFile localFile("/home/lnh/THACO_Drone/THACOGroundControl/custom/res/cc_parameters.json");
-        if (localFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            data = localFile.readAll();
-            localFile.close();
+        QJsonObject rootObj = doc.object();
+
+        // Groups
+        QJsonArray grpArr = rootObj.value("groups").toArray();
+        for (const auto& gVal : grpArr) {
+            QString gId = gVal.toObject().value("id").toString();
+            if (!gId.isEmpty() && !_groups.contains(gId)) {
+                _groups.append(gId);
+            }
         }
-    }
 
-    if (!data.isEmpty()) {
-        QJsonParseError err;
-        QJsonDocument doc = QJsonDocument::fromJson(data, &err);
-        if (err.error == QJsonParseError::NoError && doc.isObject()) {
-            QJsonObject rootObj = doc.object();
+        // Parameters
+        QJsonArray paramArr = rootObj.value("parameters").toArray();
+        for (const auto& pVal : paramArr) {
+            QJsonObject pObj = pVal.toObject();
+            CCParamMeta meta;
+            meta.name = pObj.value("name").toString();
+            meta.label = pObj.value("label").toString(meta.name);
+            meta.group = pObj.value("group").toString("General");
+            meta.description = pObj.value("description").toString();
+            meta.units = pObj.value("units").toString();
+            meta.requiresReboot = pObj.value("reboot").toBool(false);
+            meta.readOnly = pObj.value("readOnly").toBool(false);
+            meta.isSecret = pObj.value("secret").toBool(false);
+            meta.applyMode = pObj.value("applyMode").toString("staged");
+            meta.typeStr = pObj.value("type").toString("string");
 
-            // Groups
-            QJsonArray grpArr = rootObj.value("groups").toArray();
-            for (const auto& gVal : grpArr) {
-                QString gId = gVal.toObject().value("id").toString();
-                if (!gId.isEmpty() && !_groups.contains(gId)) {
-                    _groups.append(gId);
+            if (meta.typeStr == "uint32") {
+                meta.type = MAV_PARAM_EXT_TYPE_UINT32;
+            } else if (meta.typeStr == "uint8") {
+                meta.type = MAV_PARAM_EXT_TYPE_UINT8;
+            } else if (meta.typeStr == "int32") {
+                meta.type = MAV_PARAM_EXT_TYPE_INT32;
+            } else if (meta.typeStr == "real32") {
+                meta.type = MAV_PARAM_EXT_TYPE_REAL32;
+            } else {
+                meta.type = MAV_PARAM_EXT_TYPE_CUSTOM;
+            }
+
+            if (pObj.contains("min")) {
+                meta.minVal = pObj.value("min").toDouble();
+                meta.hasRange = true;
+            }
+            if (pObj.contains("max")) {
+                meta.maxVal = pObj.value("max").toDouble();
+                meta.hasRange = true;
+            }
+
+            if (pObj.contains("options")) {
+                QJsonArray optArr = pObj.value("options").toArray();
+                for (const auto& o : optArr) {
+                    meta.options.append(o.isString() ? o.toString() : QString::number(o.toDouble()));
                 }
             }
 
-            // Parameters
-            QJsonArray paramArr = rootObj.value("parameters").toArray();
-            for (const auto& pVal : paramArr) {
-                QJsonObject pObj = pVal.toObject();
-                CCParamMeta meta;
-                meta.name = pObj.value("name").toString();
-                meta.label = pObj.value("label").toString(meta.name);
-                meta.group = pObj.value("group").toString("General");
-                meta.description = pObj.value("description").toString();
-                meta.units = pObj.value("units").toString();
-                meta.requiresReboot = pObj.value("reboot").toBool(false);
-                meta.readOnly = pObj.value("readOnly").toBool(false);
-                meta.isSecret = pObj.value("secret").toBool(false);
-                meta.applyMode = pObj.value("applyMode").toString("staged");
-                meta.typeStr = pObj.value("type").toString("string");
+            _order.append(meta.name);
+            _meta[meta.name] = meta;
+            _stagedValues[meta.name] = QVariant(); // empty until the CC reports it
+            _isModified[meta.name] = false;
+            _isLiveSynced[meta.name] = false;
+            _isPending[meta.name] = false;
 
-                if (meta.typeStr == "uint32") {
-                    meta.type = MAV_PARAM_EXT_TYPE_UINT32;
-                    meta.defaultValue = static_cast<quint32>(pObj.value("default").toInt());
-                } else if (meta.typeStr == "uint8") {
-                    meta.type = MAV_PARAM_EXT_TYPE_UINT8;
-                    meta.defaultValue = static_cast<uint8_t>(pObj.value("default").toInt());
-                } else if (meta.typeStr == "int32") {
-                    meta.type = MAV_PARAM_EXT_TYPE_INT32;
-                    meta.defaultValue = pObj.value("default").toInt();
-                } else if (meta.typeStr == "real32") {
-                    meta.type = MAV_PARAM_EXT_TYPE_REAL32;
-                    meta.defaultValue = pObj.value("default").toDouble();
-                } else {
-                    meta.type = MAV_PARAM_EXT_TYPE_CUSTOM;
-                    meta.defaultValue = pObj.value("default").toString();
-                }
-
-                if (pObj.contains("min")) {
-                    meta.minVal = pObj.value("min").toDouble();
-                    meta.hasRange = true;
-                }
-                if (pObj.contains("max")) {
-                    meta.maxVal = pObj.value("max").toDouble();
-                    meta.hasRange = true;
-                }
-
-                if (pObj.contains("options")) {
-                    QJsonArray optArr = pObj.value("options").toArray();
-                    for (const auto& o : optArr) {
-                        meta.options.append(o.isString() ? o.toString() : QString::number(o.toDouble()));
-                    }
-                }
-
-                _order.append(meta.name);
-                _meta[meta.name] = meta;
-                _stagedValues[meta.name] = meta.defaultValue;
-                _isModified[meta.name] = false;
-                _isLiveSynced[meta.name] = false;
-                _isPending[meta.name] = false;
-
-                if (!_groups.contains(meta.group)) {
-                    _groups.append(meta.group);
-                }
+            if (!_groups.contains(meta.group)) {
+                _groups.append(meta.group);
             }
         }
-    }
-
-    // Safety fallback if file loading failed (named links)
-    if (_meta.isEmpty()) {
-        CCParamMeta l0p;
-        l0p.name = "CC_L0_PORT"; l0p.label = "Link 0 Port"; l0p.group = "Telemetry"; l0p.type = MAV_PARAM_EXT_TYPE_CUSTOM;
-        l0p.typeStr = "string"; l0p.defaultValue = "/dev/ttyAMA4"; l0p.description = "Serial link 0 device node";
-        l0p.applyMode = "staged";
-        _order.append(l0p.name); _meta[l0p.name] = l0p; _stagedValues[l0p.name] = l0p.defaultValue;
-
-        CCParamMeta l0b;
-        l0b.name = "CC_L0_BAUD"; l0b.label = "Link 0 Baudrate"; l0b.group = "Telemetry"; l0b.type = MAV_PARAM_EXT_TYPE_UINT32;
-        l0b.typeStr = "uint32"; l0b.defaultValue = 921600; l0b.units = "bps";
-        l0b.options = {"9600", "57600", "115200", "230400", "460800", "921600", "1500000"};
-        l0b.description = "Serial link 0 baud rate";
-        l0b.applyMode = "staged";
-        _order.append(l0b.name); _meta[l0b.name] = l0b; _stagedValues[l0b.name] = l0b.defaultValue;
-
-        CCParamMeta l1p;
-        l1p.name = "CC_L1_PORT"; l1p.label = "Link 1 Port"; l1p.group = "Telemetry"; l1p.type = MAV_PARAM_EXT_TYPE_CUSTOM;
-        l1p.typeStr = "string"; l1p.defaultValue = "/dev/ttyAMA0"; l1p.description = "Serial link 1 device node";
-        l1p.applyMode = "staged";
-        _order.append(l1p.name); _meta[l1p.name] = l1p; _stagedValues[l1p.name] = l1p.defaultValue;
-
-        CCParamMeta l1b;
-        l1b.name = "CC_L1_BAUD"; l1b.label = "Link 1 Baudrate"; l1b.group = "Telemetry"; l1b.type = MAV_PARAM_EXT_TYPE_UINT32;
-        l1b.typeStr = "uint32"; l1b.defaultValue = 115200; l1b.units = "bps";
-        l1b.options = {"9600", "57600", "115200", "230400", "460800", "921600"};
-        l1b.description = "Serial link 1 baud rate";
-        l1b.applyMode = "staged";
-        _order.append(l1b.name); _meta[l1b.name] = l1b; _stagedValues[l1b.name] = l1b.defaultValue;
-
-        _groups = {"Telemetry", "Camera", "Vision", "Network"};
     }
 
     _updateModifiedCount();
@@ -220,7 +170,7 @@ void CompanionParamService::resetState()
         _isLiveSynced[name] = false;
         _isModified[name] = false;
         _isPending[name] = false;
-        _stagedValues[name] = _meta[name].defaultValue;
+        _stagedValues[name] = QVariant(); // nothing shown until the CC reports it again
     }
 
     _updateModifiedCount();
@@ -255,7 +205,7 @@ QVariantList CompanionParamService::paramList() const
         map["liveValue"] = liveSynced ? _liveValues.value(name) : QStringLiteral("--");
 
         // Current value shown in editor
-        map["value"] = _stagedValues.value(name, m.defaultValue);
+        map["value"] = _stagedValues.value(name);
         map["isModified"] = _isModified.value(name, false);
         map["isPending"] = _isPending.value(name, false);
         map["readOnly"] = m.readOnly;
@@ -279,51 +229,28 @@ void CompanionParamService::_updateModifiedCount()
     }
 }
 
-void CompanionParamService::requestParameters(Vehicle* vehicle)
+void CompanionParamService::requestParameters()
 {
-    if (!vehicle) {
-        emit logMessage("PARAM", "ERR", "Cannot request CC params: Vehicle not connected", 3);
+    if (!_transport.valid()) {
+        emit logMessage("PARAM", "ERR", "Cannot request CC params: no Companion heartbeat yet", 3);
         return;
     }
 
+    mavlink_message_t msg;
+    mavlink_msg_param_ext_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+        _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId);
+    if (!_transport.send(msg)) {
+        emit logMessage("PARAM", "ERR", "Cannot request CC params: send failed", 3);
+        return; // not loading: nothing will answer, and loading refuses every operation
+    }
     _isLoading = true;
     _receivedCount = 0;
     _expectedCount = 0;
     _loadingTimeoutTimer->start();
     emit isLoadingChanged();
-
-    mavlink_message_t msg;
-    mavlink_param_ext_request_list_t req;
-    req.target_system = static_cast<uint8_t>(vehicle->id());
-    req.target_component = kCompanionComponentId;
-
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-    if (!sharedLink) return;
-
-    mavlink_msg_param_ext_request_list_pack_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::instance()->getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        req.target_system,
-        req.target_component);
-
-    vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_LIST sent to Comp %1").arg(kCompanionComponentId), 6);
     // The CC leaves out parameters it cannot read at this moment; ask for those individually once the LIST is done.
-    QTimer::singleShot(4000, this, [this, vehiclePtr = QPointer<Vehicle>(vehicle)]() { readMissing(vehiclePtr); });
+    QTimer::singleShot(4000, this, [this]() { readMissing(); });
 }
 
 void CompanionParamService::stageParameter(const QString& name, const QVariant& value)
@@ -333,9 +260,8 @@ void CompanionParamService::stageParameter(const QString& name, const QVariant& 
 
     _stagedValues[name] = value;
 
-    // Check if new value differs from live authoritative value (or default if not synced)
-    QVariant refValue = _isLiveSynced.value(name, false) ? _liveValues.value(name) : _meta[name].defaultValue;
-    bool modified = (value.toString() != refValue.toString());
+    // Modified against what the CC confirmed (nothing yet: any value is a change).
+    bool modified = (value.toString() != confirmedValue(name).toString());
     _isModified[name] = modified;
 
     _updateModifiedCount();
@@ -346,26 +272,18 @@ void CompanionParamService::resetParameter(const QString& name)
 {
     if (!_meta.contains(name)) return;
 
-    QVariant refValue = _isLiveSynced.value(name, false) ? _liveValues.value(name) : _meta[name].defaultValue;
-    _stagedValues[name] = refValue;
+    _stagedValues[name] = confirmedValue(name);
     _isModified[name] = false;
 
     _updateModifiedCount();
     emit paramListChanged();
 }
 
-void CompanionParamService::resetToDefault(const QString& name)
-{
-    if (!_meta.contains(name)) return;
-    stageParameter(name, _meta[name].defaultValue);
-}
-
 void CompanionParamService::resetAllModified()
 {
     for (const QString& name : _order) {
         if (_isModified.value(name, false)) {
-            QVariant refValue = _isLiveSynced.value(name, false) ? _liveValues.value(name) : _meta[name].defaultValue;
-            _stagedValues[name] = refValue;
+            _stagedValues[name] = confirmedValue(name);
             _isModified[name] = false;
         }
     }
@@ -373,11 +291,11 @@ void CompanionParamService::resetAllModified()
     emit paramListChanged();
 }
 
-QStringList CompanionParamService::saveModifiedParameters(Vehicle* vehicle)
+QStringList CompanionParamService::saveModifiedParameters()
 {
     QStringList sent;
-    if (!vehicle) {
-        emit logMessage("PARAM", "ERR", "Cannot save CC params: Vehicle not connected", 3);
+    if (!_transport.valid()) {
+        emit logMessage("PARAM", "ERR", "Cannot save CC params: no Companion heartbeat yet", 3);
         return sent;
     }
 
@@ -388,7 +306,7 @@ QStringList CompanionParamService::saveModifiedParameters(Vehicle* vehicle)
                 _isModified[name] = false; // the CC already has this value: nothing to write, no ACK to wait for
                 continue;
             }
-            sendSingleParamSet(vehicle, name, _stagedValues.value(name));
+            sendSingleParamSet(name, _stagedValues.value(name));
             sent.append(name);
         }
     }
@@ -418,12 +336,12 @@ QList<Fact*> CompanionParamService::allFacts() const
     return facts;
 }
 
-void CompanionParamService::sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value)
+bool CompanionParamService::sendSingleParamSet(const QString& name, const QVariant& value)
 {
-    if (!vehicle || !_meta.contains(name)) return;
-    if (_meta[name].readOnly) return;
+    if (!_transport.valid()) return false;
+    if (!_meta.contains(name) || _meta[name].readOnly) return true;
     // A lost ACK leaves a write uncertain; rollback must resend even the old readback value.
-    if (!_isPending.value(name) && confirmedValue(name).isValid() && confirmedValue(name).toString() == value.toString()) return;
+    if (!_isPending.value(name) && confirmedValue(name).isValid() && confirmedValue(name).toString() == value.toString()) return true;
 
     const auto& meta = _meta[name];
     char paramIdBuf[16];
@@ -435,35 +353,13 @@ void CompanionParamService::sendSingleParamSet(Vehicle* vehicle, const QString& 
     _encodeValue(value, meta.type, valBuf);
 
     mavlink_message_t msg;
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle && vehicle->vehicleLinkManager()) {
-        sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    }
-    if (!sharedLink) {
-        const auto links = LinkManager::instance()->links();
-        for (const auto& l : links) {
-            if (l && l->isConnected()) {
-                sharedLink = l;
-                break;
-            }
-        }
-    }
-    if (!sharedLink) return;
+    mavlink_msg_param_ext_set_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+        _transport.channel, &msg, static_cast<uint8_t>(_transport.systemId), kCompanionComponentId, paramIdBuf, valBuf, meta.type);
 
-    mavlink_msg_param_ext_set_pack_chan(
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::instance()->getComponentId(),
-        sharedLink->mavlinkChannel(),
-        &msg,
-        static_cast<uint8_t>(vehicle->id()),
-        kCompanionComponentId,
-        paramIdBuf,
-        valBuf,
-        meta.type);
-
+    if (!_transport.send(msg)) return false;
     _isPending[name] = true;
-    vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
     emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, meta.isSecret ? QStringLiteral("<hidden>") : value.toString()), 6);
+    return true;
 }
 
 bool CompanionParamService::exportParameters(const QString& filePath)
@@ -595,18 +491,25 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
 
         // Dynamically add param if missing from template
         if (!_meta.contains(paramId)) {
+            // Every link the CC reports shares link 0's schema: the link count comes from the CC (spec §6).
+            static const QRegularExpression linkParam(QStringLiteral("^CC_L\\d+_"));
+            const QString linkTemplate = QString(paramId).replace(linkParam, QStringLiteral("CC_L0_"));
             CCParamMeta dynMeta;
+            if (linkTemplate != paramId && _meta.contains(linkTemplate)) {
+                dynMeta = _meta.value(linkTemplate);
+            } else {
+                dynMeta.group = "Other";
+                dynMeta.type = pval.param_type;
+                dynMeta.readOnly = true;
+                dynMeta.applyMode = "boot_only";
+            }
             dynMeta.name = paramId;
             dynMeta.label = paramId;
-            dynMeta.group = "Other";
-            dynMeta.type = pval.param_type;
             dynMeta.defaultValue = val;
-            dynMeta.readOnly = true;
-            dynMeta.applyMode = "boot_only";
             _order.append(paramId);
             _meta[paramId] = dynMeta;
-            if (!_groups.contains("Other")) {
-                _groups.append("Other");
+            if (!_groups.contains(dynMeta.group)) {
+                _groups.append(dynMeta.group);
                 emit groupsChanged();
             }
         }
@@ -754,13 +657,9 @@ int CompanionParamService::syncedCount() const
     return count;
 }
 
-void CompanionParamService::readMissing(Vehicle* vehicle)
+void CompanionParamService::readMissing()
 {
-    if (!vehicle) return;
-
-    SharedLinkInterfacePtr sharedLink;
-    if (vehicle->vehicleLinkManager()) sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    if (!sharedLink) return;
+    if (!_transport.valid()) return;
 
     int requested = 0;
     for (const QString& name : _order) {
@@ -770,9 +669,9 @@ void CompanionParamService::readMissing(Vehicle* vehicle)
         std::memcpy(idBuf, id.constData(), std::min<size_t>(id.size(), sizeof(idBuf)));
         mavlink_message_t msg;
         mavlink_msg_param_ext_request_read_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
-            MAVLinkProtocol::instance()->getComponentId(), sharedLink->mavlinkChannel(), &msg,
-            static_cast<uint8_t>(vehicle->id()), kCompanionComponentId, idBuf, -1);
-        vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+            MAVLinkProtocol::getComponentId(), _transport.channel, &msg,
+            static_cast<uint8_t>(_transport.systemId), kCompanionComponentId, idBuf, -1);
+        _transport.send(msg);
         ++requested;
     }
     if (requested) emit logMessage("PARAM", "TX", QString("PARAM_EXT_REQUEST_READ for %1 parameter(s) missing after LIST").arg(requested), 6);

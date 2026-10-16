@@ -8,11 +8,20 @@
 #include <QtCore/QVariantMap>
 #include <QtCore/QMap>
 #include <QtCore/QTimer>
+#include <functional>
 
 #include "ITelemetryHandler.h"
-#include "Vehicle.h"
 
 class Fact;
+
+/// Where PARAM_EXT_* goes: the CC's system id, the MAVLink channel of the link its heartbeat came in on, and the send
+/// function. No Vehicle: the CC must be configurable while the FC is silent.
+struct CompanionTransport {
+    int systemId{-1};
+    uint8_t channel{0};
+    std::function<bool(const mavlink_message_t&)> send;
+    bool valid() const { return systemId > 0 && bool(send); }
+};
 
 struct CCParamMeta {
     QString name;
@@ -53,21 +62,25 @@ public:
     // ITelemetryHandler interface
     bool handleMavlinkMessage(const mavlink_message_t& message) override;
     void resetState() override;
+    /// The bundled catalog; tests load another file. No values or defaults: each value comes from the CC (spec §6).
+    void loadTemplate(const QString& path = QStringLiteral(":/custom/params/cc_parameters.json"));
+    /// The catalog did not load: there are no parameters, and nothing can be configured.
+    bool loadError() const { return _loadError; }
 
     QVariantList paramList() const;
     bool isLoading() const { return _isLoading; }
     int modifiedCount() const { return _modifiedCount; }
     QStringList groups() const { return _groups; }
 
-    void requestParameters(Vehicle* vehicle);
+    void setTransport(CompanionTransport t) { _transport = std::move(t); }
+    void requestParameters();
     void stageParameter(const QString& name, const QVariant& value);
     void resetParameter(const QString& name);
-    void resetToDefault(const QString& name);
     void resetAllModified();
     /// Sends PARAM_EXT_SET for every modified parameter and returns the names it sent (their ACKs arrive via parameterSaved).
-    QStringList saveModifiedParameters(Vehicle* vehicle);
+    QStringList saveModifiedParameters();
     /// Parameters the CC has not yet reported; read one by one after a LIST because the CC omits what it cannot read.
-    void readMissing(Vehicle* vehicle);
+    void readMissing();
     int syncedCount() const;
     bool isModified(const QString& name) const { return _isModified.value(name, false); }
     QStringList allFactNames() const { return _order; }
@@ -77,12 +90,17 @@ public:
     int stagedSubsystem(const QString& name) const;
     /// Facts for the Parameters editor, in catalog order. Edits made on them are staged here.
     QList<Fact*> allFacts() const;
-    void sendSingleParamSet(Vehicle* vehicle, const QString& name, const QVariant& value);
+    /// false only when the PARAM_EXT_SET could not be sent (no transport, or the send failed); a SET it skips counts as sent.
+    bool sendSingleParamSet(const QString& name, const QVariant& value);
 
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
-    QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
-
     bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
+    bool isReadOnly(const QString& name) const { return _meta.value(name).readOnly; }
+    QStringList options(const QString& name) const { return _meta.value(name).options; }
+    QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
+    /// confirmedValue() is invalid again until the CC reports the parameter anew.
+    void forgetConfirmed(const QString& name) { _isLiveSynced[name] = false; }
+
     bool exportParameters(const QString& filePath);
     bool importParameters(const QString& filePath);
 
@@ -99,7 +117,6 @@ private slots:
     void _onLoadingTimeout();
 
 private:
-    void _loadTemplate();
     void _syncFacts();
     QMap<QString, Fact*> _facts;
     void _updateModifiedCount();
@@ -107,6 +124,7 @@ private:
     void _encodeValue(const QVariant& val, uint8_t type, char* outRaw) const;
 
     bool _isLoading = false;
+    bool _loadError = false;
     int _modifiedCount = 0;
     uint16_t _expectedCount = 0;
     uint16_t _receivedCount = 0;
@@ -123,4 +141,5 @@ private:
     QMap<QString, QVariant> _stagedValues;
     QMap<QString, bool> _isModified;
     QMap<QString, bool> _isPending;
+    CompanionTransport _transport;
 };
