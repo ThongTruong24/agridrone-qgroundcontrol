@@ -1,8 +1,8 @@
 # THACO GROUND CONTROL — KẾ HOẠCH TÁI CẤU TRÚC TOÀN DIỆN (QGC REFACTOR PLAN)
 ## Tối Ưu Hóa Kiến Trúc, Khắc Phục Lỗi Nguy Hiểm, Đảm Bảo SOLID & Loại Bỏ Hardcode
 
-> **Phân hệ:** `THACOGroundControl` (Trạm Mặt Đất GCS — C++20 / Qt6 / QML)  
-> **Phương pháp tiếp cận:** Tối giản, loại bỏ over-engineering, YAGNI (**Ponytail**) kết hợp quy trình thực thi từng bước có kiểm thử chặt chẽ (**Writing Plans**).  
+> **Phân hệ:** `THACOGroundControl` (Trạm Mặt Đất GCS — C++20 / Qt6 / QML)
+> **Phương pháp tiếp cận:** Tối giản, loại bỏ over-engineering, YAGNI (**Ponytail**) kết hợp quy trình thực thi từng bước có kiểm thử chặt chẽ (**Writing Plans**).
 > **Mục tiêu cốt lõi:** Loại bỏ triệt để rủi ro mất an toàn bay — Sửa toàn bộ lỗi logic & race conditions — Tuân thủ chuẩn SOLID & QGC UI Design Rule.
 
 ---

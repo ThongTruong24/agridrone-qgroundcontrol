@@ -12,6 +12,7 @@ private slots:
     void _testStageAndReset();
     void _testParamExtValueDecode();
     void _testParamExtAckHandling();
+    void _testExportAndImport();
     void _testRejectsWrongComponentId();
     void _testExact16ByteParamId();
     void _testParamAckInProgressRemainsPending();

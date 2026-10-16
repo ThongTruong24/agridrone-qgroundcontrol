@@ -17,12 +17,19 @@ namespace Companion {
 inline constexpr uint8_t kCompId = MAV_COMP_ID_ONBOARD_COMPUTER;
 
 /// param1 of MAV_CMD_THACO_{APPLY,SAVE_DEFAULT,RESTORE_DEFAULT}_CONFIG (thaco_common.xml)
-enum Subsystem : int { All = 0, Telemetry = 1, Camera = 2, Network = 3, Vision = 4 };
+enum Subsystem : int
+{
+    All = 0,
+    Telemetry = 1,
+    Camera = 2,
+    Network = 3,
+    Vision = 4
+};
 
-inline constexpr int kTelemetryTimeoutMs  = 3500;  // CC telemetry is 1 Hz: three missed ticks
+inline constexpr int kTelemetryTimeoutMs = 3500;  // CC telemetry is 1 Hz: three missed ticks
 inline constexpr int kCommandAckTimeoutMs = 5000;
-inline constexpr int kConfirmTimeoutMs    = 6000;  // CC restarts the router before links telemetry resumes
-inline constexpr int kToastMs             = 4000;
+inline constexpr int kConfirmTimeoutMs = 6000;    // CC restarts the router before links telemetry resumes
+inline constexpr int kToastMs = 4000;
 inline constexpr int kMaxPortBytes = sizeof(mavlink_cc_serial_link_t::port) - 1;
 
 template <std::size_t N>
@@ -36,4 +43,7 @@ SharedLinkInterfacePtr resolveLink(Vehicle* vehicle);
 bool sendMessage(Vehicle* vehicle, const SharedLinkInterfacePtr& link, const mavlink_message_t& msg);
 bool sendCommand(Vehicle* vehicle, uint8_t targetSystem, MAV_CMD command, float param1, float param2 = 0.0f);
 
-} // namespace Companion
+bool sendAiVisionControl(Vehicle* vehicle, bool boundingBox, bool tracking, bool following);
+bool sendTrackPoint(Vehicle* vehicle, double x, double y, double radius);
+
+}  // namespace Companion

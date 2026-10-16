@@ -101,6 +101,8 @@ public:
     /// confirmedValue() is invalid again until the CC reports the parameter anew.
     void forgetConfirmed(const QString& name) { _isLiveSynced[name] = false; }
 
+    bool exportParameters(const QString& filePath);
+    bool importParameters(const QString& filePath);
 
 signals:
     void paramListChanged();
@@ -108,7 +110,7 @@ signals:
     void modifiedCountChanged();
     void groupsChanged();
     void parameterSaved(const QString& name, bool success, const QString& message);
-    void parameterAckInProgress(const QString& name); ///< the CC accepted the SET and is applying it
+    void parameterAckInProgress(const QString& name);
     void logMessage(const QString& category, const QString& direction, const QString& message, int severity);
 
 private slots:

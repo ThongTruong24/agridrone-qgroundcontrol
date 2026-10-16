@@ -8,6 +8,10 @@ class CompanionControllerTest : public UnitTest
     Q_OBJECT
 
 private slots:
+    void _testMissionAndLogFiltering();
+    void _testConfigResponses();
+    void _testAiVisionStateInvariant();
+    void _testAiVisionTrackPointGuards();
     void _testToolbarLegacyAndIndependentStreams();
     void _testGeneratedMessageDecoding();
     void _testSourceFiltering();
@@ -59,6 +63,9 @@ class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
     Q_OBJECT
 
 private slots:
+    void _testSingleMessageDispatch();
+    void _testAiVisionTransmission();
+    void _testAiVisionTrackPointTransmission();
     void _testDisconnectAndReconnectReset();
     void _testReadbackLinkHotspotAndOpOutlivesVehicle();
     void _testStreamOptionsFromCapabilityParams();

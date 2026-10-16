@@ -362,6 +362,109 @@ bool CompanionParamService::sendSingleParamSet(const QString& name, const QVaria
     return true;
 }
 
+bool CompanionParamService::exportParameters(const QString& filePath)
+{
+    QString path = filePath;
+    if (path.startsWith("file://")) {
+        path = QUrl(filePath).toLocalFile();
+    }
+    if (path.isEmpty()) return false;
+
+    QJsonObject rootObj;
+    rootObj["fileType"] = "THACO_CC_PARAMETERS";
+    rootObj["version"] = 1;
+    rootObj["componentId"] = kCompanionComponentId;
+    rootObj["exportDate"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    QJsonObject paramsObj;
+    for (const QString& name : _order) {
+        if (_meta[name].isSecret) continue;
+        QVariant v = _stagedValues.value(name, _meta[name].defaultValue);
+        if (v.typeId() == QMetaType::Double) {
+            paramsObj[name] = v.toDouble();
+        } else if (v.typeId() == QMetaType::Int || v.typeId() == QMetaType::UInt || v.typeId() == QMetaType::LongLong) {
+            paramsObj[name] = v.toLongLong();
+        } else {
+            paramsObj[name] = v.toString();
+        }
+    }
+    rootObj["parameters"] = paramsObj;
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        emit logMessage("PARAM", "ERR", QString("Export failed: cannot write to %1").arg(path), 3);
+        return false;
+    }
+
+    QJsonDocument doc(rootObj);
+    file.write(doc.toJson(QJsonDocument::Indented));
+    file.close();
+
+    emit logMessage("PARAM", "SYS", QString("Exported %1 parameters to %2").arg(_order.size()).arg(QFileInfo(path).fileName()), 6);
+    return true;
+}
+
+bool CompanionParamService::importParameters(const QString& filePath)
+{
+    QString path = filePath;
+    if (path.startsWith("file://")) {
+        path = QUrl(filePath).toLocalFile();
+    }
+    if (path.isEmpty()) return false;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        emit logMessage("PARAM", "ERR", QString("Import failed: cannot read %1").arg(path), 3);
+        return false;
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    int importedCount = 0;
+
+    // Try parsing as JSON first
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+    if (err.error == QJsonParseError::NoError && doc.isObject()) {
+        QJsonObject rootObj = doc.object();
+        QJsonObject paramsObj = rootObj.contains("parameters") ? rootObj.value("parameters").toObject() : rootObj;
+
+        for (auto it = paramsObj.begin(); it != paramsObj.end(); ++it) {
+            QString name = it.key();
+            if (_meta.contains(name)) {
+                QVariant val = it.value().toVariant();
+                stageParameter(name, val);
+                importedCount++;
+            }
+        }
+    } else {
+        // Fallback: parse as KEY=VALUE text lines (.params style)
+        QTextStream stream(data);
+        while (!stream.atEnd()) {
+            QString line = stream.readLine().trimmed();
+            if (line.isEmpty() || line.startsWith("#") || line.startsWith("//")) continue;
+            int eqIdx = line.indexOf('=');
+            if (eqIdx > 0) {
+                QString name = line.left(eqIdx).trimmed();
+                QString val = line.mid(eqIdx + 1).trimmed();
+                if (_meta.contains(name)) {
+                    stageParameter(name, val);
+                    importedCount++;
+                }
+            }
+        }
+    }
+
+    if (importedCount > 0) {
+        emit logMessage("PARAM", "SYS", QString("Imported %1 parameter(s) from %2").arg(importedCount).arg(QFileInfo(path).fileName()), 6);
+        return true;
+    }
+
+    emit logMessage("PARAM", "ERR", QString("No valid CC parameters found in %1").arg(QFileInfo(path).fileName()), 4);
+    return false;
+}
+
 bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& message)
 {
     if (message.compid != kCompanionComponentId) {

@@ -15,6 +15,8 @@ set(QGC_RESOURCES ${QGC_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 qt_add_library(AgriDroneModule STATIC)
 
 set(AGRIDRONE_QML_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionButton.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CameraStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamStatusPage.qml
@@ -91,6 +93,8 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionMavlinkDispatcherTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionParamServiceTest.cc
@@ -103,6 +107,7 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
     add_qgc_test(CompanionVehicleLifecycleTest LABELS Integration Vehicle)
     add_qgc_test(CompanionMavlinkDispatcherTest LABELS Unit)
     add_qgc_test(CompanionLinksServiceTest LABELS Unit)
+    add_qgc_test(CompanionLogServiceTest LABELS Unit)
     add_qgc_test(CompanionParamServiceTest LABELS Unit)
     add_qgc_test(CompanionProtocolTest LABELS Unit)
     add_qgc_test(AgriDroneControllerTest LABELS Unit Vehicle)
@@ -122,6 +127,10 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/AgriDroneComponent.cc

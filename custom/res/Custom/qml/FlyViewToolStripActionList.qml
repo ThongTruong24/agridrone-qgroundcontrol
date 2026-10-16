@@ -25,6 +25,7 @@ ToolStripActionList {
         GuidedActionPause { },
         FlyViewAdditionalActionsButton { },
         AgriDroneFlyViewButton { },
+        AgriDroneAIVisionButton { },
         FlyViewGripperButton { }
     ]
 }

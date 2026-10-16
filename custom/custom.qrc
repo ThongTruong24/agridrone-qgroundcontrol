@@ -13,6 +13,8 @@
         <file alias="cc_parameters.json">res/cc_parameters.json</file>
     </qresource>
     <qresource prefix="/Custom/qml">
+        <file alias="QGroundControl/FlyView/OnScreenCameraTrackingController.qml">src/FlyView/OnScreenCameraTrackingController.qml</file>
+        <file alias="QGroundControl/FlyView/OnScreenGimbalController.qml">src/FlyView/OnScreenGimbalController.qml</file>
         <file alias="QGroundControl/FlyView/FlyViewToolStripActionList.qml">res/Custom/qml/FlyViewToolStripActionList.qml</file>
         <file alias="QGroundControl/Toolbar/FlyViewToolBar.qml">res/Custom/qml/FlyViewToolBar.qml</file>
     </qresource>
