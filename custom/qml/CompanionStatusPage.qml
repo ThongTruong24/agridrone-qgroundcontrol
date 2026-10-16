@@ -114,6 +114,7 @@ ToolIndicatorPage {
                         LabelledLabel { label: qsTr("Baudrate"); labelText: portRow.isFresh ? portRow.linkData.baudrate : qsTr("N/A") }
                         LabelledLabel { label: qsTr("TX (B/s)"); labelText: portRow.isFresh ? Math.round(portRow.linkData.txRate) : qsTr("N/A") }
                         LabelledLabel { label: qsTr("RX (B/s)"); labelText: portRow.isFresh ? Math.round(portRow.linkData.rxRate) : qsTr("N/A") }
+                        LabelledLabel { label: qsTr("RX errors (/s)"); labelText: portRow.isFresh ? portRow.linkData.rxErrors : qsTr("N/A") }
 
                         QGCComboBox {
                             id: portCombo

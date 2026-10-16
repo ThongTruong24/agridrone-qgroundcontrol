@@ -43,7 +43,8 @@ bool CompanionLinksService::handleMavlinkMessage(const mavlink_message_t& messag
     QString portStr = QString::fromUtf8(lnk.port, qstrnlen(lnk.port, sizeof(lnk.port))).trimmed();
 
     _indexedLinks[lnk.link_index] = {{"index", lnk.link_index}, {"name", linkName}, {"port", portStr},
-        {"status", lnk.status}, {"baudrate", lnk.baudrate}, {"txRate", lnk.tx_rate}, {"rxRate", lnk.rx_rate}};
+        {"status", lnk.status}, {"baudrate", lnk.baudrate}, {"txRate", lnk.tx_rate}, {"rxRate", lnk.rx_rate},
+        {"rxErrors", lnk.rx_errors}};
     _receivedAt[lnk.link_index] = _clock.elapsed();
 
     // Drop links the Companion no longer reports (link_count shrank).

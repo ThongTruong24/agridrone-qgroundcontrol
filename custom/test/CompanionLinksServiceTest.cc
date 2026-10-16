@@ -16,9 +16,10 @@ void copyField(char (&target)[Size], const char* source)
 }
 
 mavlink_message_t packLink(uint8_t system, uint8_t component, const char* name, uint8_t index,
-                           uint32_t baud, const char* port, uint8_t status, uint8_t count = 4)
+                           uint32_t baud, const char* port, uint8_t status, uint8_t count = 4, uint32_t rxErrors = 0)
 {
     mavlink_cc_serial_link_t packet{};
+    packet.rx_errors = rxErrors;
     packet.link_index = index;
     packet.link_count = count;
     packet.baudrate = baud;
@@ -37,7 +38,7 @@ void CompanionLinksServiceTest::_testDecodeLinksMessage()
     CompanionLinksService service;
     QSignalSpy linksSpy(&service, &CompanionLinksService::linksChanged);
 
-    const mavlink_message_t msgFc = packLink(42, 191, "FC", 0, 921600, "/dev/ttyFC", 2);
+    const mavlink_message_t msgFc = packLink(42, 191, "FC", 0, 921600, "/dev/ttyFC", 2, 4, 609);
     const mavlink_message_t msgSiyi = packLink(42, 191, "SIYI", 1, 115200, "/dev/ttySIYI", 2);
     QVERIFY(service.handleMavlinkMessage(msgFc));
     QVERIFY(service.handleMavlinkMessage(msgSiyi));
@@ -47,6 +48,8 @@ void CompanionLinksServiceTest::_testDecodeLinksMessage()
     QCOMPARE(service.serialLinks().at(0).toMap()["port"].toString(), QStringLiteral("/dev/ttyFC"));
     QCOMPARE(service.serialLinks().at(1).toMap()["port"].toString(), QStringLiteral("/dev/ttySIYI"));
     QCOMPARE(service.serialLinks().at(0).toMap()["baudrate"].toUInt(), 921600u);
+    // 2026-10-15: a baud mismatch showed only B/s, never the UART errors the CC reports.
+    QCOMPARE(service.serialLinks().at(0).toMap()["rxErrors"].toUInt(), 609u);
     QCOMPARE(service.transportProtocol(), QStringLiteral("Serial / UART"));
     QVERIFY(linksSpy.count() >= 1);
 }
