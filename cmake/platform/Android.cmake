@@ -87,6 +87,9 @@ message(STATUS "QGC: Android version code: ${ANDROID_VERSION_CODE}")
 # derives the same location as the sibling 'extra_java_sources' of its project dir.
 set(QGC_ANDROID_EXTRA_JAVA_SOURCES_DIR "${CMAKE_BINARY_DIR}/extra_java_sources")
 
+set(QGC_ANDROID_VERSION_NAME "${CMAKE_PROJECT_VERSION}" CACHE STRING "Android display version")
+set(QGC_ANDROID_APP_NAME "${CMAKE_PROJECT_NAME}" CACHE STRING "Android launcher label")
+
 set_target_properties(${CMAKE_PROJECT_NAME}
     PROPERTIES
         # QT_ANDROID_ABIS ${CMAKE_ANDROID_ARCH_ABI}
@@ -96,9 +99,9 @@ set_target_properties(${CMAKE_PROJECT_NAME}
         QT_ANDROID_COMPILE_SDK_VERSION ${QGC_QT_ANDROID_COMPILE_SDK_VERSION}
         QT_ANDROID_PACKAGE_NAME "${QGC_ANDROID_PACKAGE_NAME}"
         QT_ANDROID_PACKAGE_SOURCE_DIR "${QGC_ANDROID_PACKAGE_SOURCE_DIR}"
-        QT_ANDROID_VERSION_NAME "${CMAKE_PROJECT_VERSION}"
+        QT_ANDROID_VERSION_NAME "${QGC_ANDROID_VERSION_NAME}"
         QT_ANDROID_VERSION_CODE ${ANDROID_VERSION_CODE}
-        QT_ANDROID_APP_NAME "${CMAKE_PROJECT_NAME}"
+        QT_ANDROID_APP_NAME "${QGC_ANDROID_APP_NAME}"
         QT_ANDROID_APP_ICON "@mipmap/ic_launcher"
         QT_ANDROID_LEGACY_PACKAGING $<BOOL:${QGC_ENABLE_ASAN}>
         QT_QML_ROOT_PATH "${CMAKE_SOURCE_DIR}"
@@ -113,7 +116,11 @@ set_target_properties(${CMAKE_PROJECT_NAME}
 # endif()
 
 # Forward Python3_EXECUTABLE so per-ABI sub-configures use the same interpreter (jinja2 lives in workspace .venv, not hostedtoolcache python).
-list(APPEND QT_ANDROID_MULTI_ABI_FORWARD_VARS QGC_STABLE_BUILD QT_HOST_PATH Python3_EXECUTABLE)
+list(APPEND QT_ANDROID_MULTI_ABI_FORWARD_VARS
+    QGC_STABLE_BUILD QT_HOST_PATH Python3_EXECUTABLE
+    QGC_PACKAGE_NAME QGC_ANDROID_PACKAGE_NAME QGC_ANDROID_VERSION_NAME QGC_ANDROID_APP_NAME
+    QGC_ANDROID_GSTREAMER_SDK_ROOT
+)
 
 # ----------------------------------------------------------------------------
 # Android OpenSSL Libraries

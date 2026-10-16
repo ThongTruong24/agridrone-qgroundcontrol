@@ -7,6 +7,7 @@
 
 #include "CompanionParamService.h"
 #include "Fact.h"
+#include "MAVLinkProtocol.h"
 #include "QGCMAVLink.h"
 
 UT_REGISTER_TEST(CompanionParamServiceTest, TestLabel::Unit)
@@ -60,7 +61,7 @@ void CompanionParamServiceTest::_testInitialTemplateLoads()
         QVariantMap map = item.toMap();
         if (map.value("name").toString() == "CC_L0_BAUD") {
             foundBaud = true;
-            QCOMPARE(map.value("defaultValue").toUInt(), 921600u);
+            QVERIFY(!map.value("defaultValue").isValid()); // 2026-10-14: no QGC-side default (this asserted 921600)
             QVERIFY(map.value("options").toStringList().contains("921600"));
             break;
         }
@@ -257,16 +258,7 @@ void CompanionParamServiceTest::_testNamedLinksReplaceLegacyLinks()
     QVERIFY(!names.contains("CC_FC_BAUD"));
     QVERIFY(!names.contains("CC_SIYI_PORT"));
     QVERIFY(!names.contains("CC_SIYI_BAUD"));
-
-    // Check defaults: L0 port must be /dev/ttyAMA4, NOT /dev/ttyTHS1
-    for (const auto& item : list) {
-        QVariantMap map = item.toMap();
-        if (map.value("name").toString() == "CC_L0_PORT") {
-            QCOMPARE(map.value("defaultValue").toString(), QStringLiteral("/dev/ttyAMA4"));
-        } else if (map.value("name").toString() == "CC_L1_PORT") {
-            QCOMPARE(map.value("defaultValue").toString(), QStringLiteral("/dev/ttyAMA0"));
-        }
-    }
+    // 2026-10-14: the port defaults this checked are gone; _testNoValueBeforeCompanionAnswers covers it.
 }
 
 void CompanionParamServiceTest::_testReadOnlyAndBootOnlyCannotBeStaged()
@@ -315,6 +307,34 @@ void CompanionParamServiceTest::_testUnknownParamsNotWritable()
 
     service.stageParameter("CC_UNKNOWN_VAR", 100);
     QCOMPARE(service.modifiedCount(), 0);
+}
+
+// 2026-10-14: cc_parameters.json describes links 0/1 only; a CC_L2_* the CC reported became read-only and its SET was skipped.
+void CompanionParamServiceTest::_testLinkNParamsCloneLinkZeroTemplate()
+{
+    CompanionParamService service;
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L2_BAUD", 57600, 3, 0)));
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L2_NOPE", 1, 3, 1)));  // no CC_L0_NOPE template
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "XCC_L2_BAUD", 1, 3, 2))); // not a link parameter
+    QVariantMap link0, link2, noTemplate, notLink;
+    for (const auto& item : service.paramList()) {
+        const auto map = item.toMap();
+        const auto name = map.value("name").toString();
+        if (name == "CC_L0_BAUD") link0 = map;
+        else if (name == "CC_L2_BAUD") link2 = map;
+        else if (name == "CC_L2_NOPE") noTemplate = map;
+        else if (name == "XCC_L2_BAUD") notLink = map;
+    }
+    QVERIFY(!link2.isEmpty());
+    QVERIFY(!link2.value("readOnly").toBool());
+    QCOMPARE(link2.value("group"), link0.value("group"));
+    QCOMPARE(link2.value("options"), link0.value("options"));
+    QCOMPARE(link2.value("label").toString(), QString("CC_L2_BAUD")); // its own name, not "Link 0 Baudrate"
+    QCOMPARE(link2.value("defaultValue").toUInt(), 57600u);            // the value the CC reported, not link 0's default
+    QVERIFY(noTemplate.value("readOnly").toBool());
+    QVERIFY(notLink.value("readOnly").toBool());
+    service.stageParameter("CC_L2_BAUD", 115200);
+    QCOMPARE(service.modifiedCount(), 1);
 }
 
 void CompanionParamServiceTest::_testConfirmedFacts()
@@ -367,4 +387,73 @@ void CompanionParamServiceTest::_testEditorFactOrderAndStagedSubsystems()
     QCOMPARE(service.stagedSubsystem("CC_AP_SSID"), 3);
     QCOMPARE(service.stagedSubsystem("CC_CAM_FPS"), 0);
     QCOMPARE(service.stagedSubsystem("CC_NOT_A_PARAM"), 0);
+}
+
+// 2026-10-14: with the FC silent there is no Vehicle; the parameter read must still reach the CC (THACO_Drone-qx3).
+void CompanionParamServiceTest::_testRequestGoesToTransportWithoutVehicle()
+{
+    CompanionParamService service;
+    QList<mavlink_message_t> sent;
+    service.requestParameters(); // no transport yet: nothing to send to
+    QVERIFY(!service.isLoading());
+
+    service.setTransport({7, 0, [&](const mavlink_message_t& m) { sent.append(m); return true; }});
+    service.requestParameters();
+    QCOMPARE(sent.size(), 1);
+    QCOMPARE(sent.first().msgid, uint32_t(MAVLINK_MSG_ID_PARAM_EXT_REQUEST_LIST));
+    QCOMPARE(sent.first().sysid, uint8_t(MAVLinkProtocol::instance()->getSystemId()));
+    mavlink_param_ext_request_list_t request{};
+    mavlink_msg_param_ext_request_list_decode(&sent.first(), &request);
+    QCOMPARE(request.target_system, uint8_t(7));
+    QCOMPARE(request.target_component, uint8_t(191));
+    QVERIFY(service.isLoading());
+}
+
+// 2026-10-14: a REQUEST_LIST that could not be sent left the service "loading", which refused every operation for 6 s.
+void CompanionParamServiceTest::_testFailedRequestSendDoesNotLoad()
+{
+    CompanionParamService service;
+    service.setTransport({7, 0, [](const mavlink_message_t&) { return false; }});
+    service.requestParameters();
+    QVERIFY(!service.isLoading());
+}
+
+// 2026-10-14: QGC showed /dev/ttyAMA4, FC, 921600 before the CC answered; every value now comes from the CC.
+void CompanionParamServiceTest::_testNoValueBeforeCompanionAnswers()
+{
+    CompanionParamService service;
+    QVERIFY(!service.allFactNames().isEmpty());
+    QVERIFY(!service.loadError());
+    for (const auto& name : service.allFactNames()) {
+        QVERIFY2(!service.stagedValue(name).isValid() || service.stagedValue(name).toString().isEmpty(), qPrintable(name));
+        QVERIFY(!service.confirmedValue(name).isValid());
+    }
+    QVERIFY(service.allFactNames().contains("CC_SER_PORTS"));
+    QVERIFY(service.isReadOnly("CC_SER_PORTS"));
+    QVERIFY(service.options("CC_L0_BAUD").contains("57600"));
+
+    // The CC's value is shown once it reports one, and nothing again after a reset (CC lost).
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 57600, 1, 0)));
+    QCOMPARE(service.stagedValue("CC_L0_BAUD").toUInt(), 57600u);
+    service.resetState();
+    QVERIFY(!service.stagedValue("CC_L0_BAUD").isValid());
+}
+
+// 2026-10-14: a catalog that did not load fell back to a built-in table of links, ports and bauds.
+void CompanionParamServiceTest::_testCatalogLoadErrorHasNoParameters()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QFile broken(dir.filePath("broken.json"));
+    QVERIFY(broken.open(QIODevice::WriteOnly));
+    broken.write("{ not json");
+    broken.close();
+    for (const QString& path : {dir.filePath("missing.json"), broken.fileName()}) {
+        CompanionParamService service;
+        service.loadTemplate(path);
+        QVERIFY2(service.loadError(), qPrintable(path));
+        QVERIFY2(service.allFactNames().isEmpty(), qPrintable(path));
+        QVERIFY(service.paramList().isEmpty());
+        QVERIFY(service.options("CC_L0_BAUD").isEmpty());
+    }
 }

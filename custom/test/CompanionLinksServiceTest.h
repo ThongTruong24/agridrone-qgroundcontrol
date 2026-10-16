@@ -14,4 +14,5 @@ private slots:
     void _testRejectsWrongComponentId();
     void _testResetStateClears();
     void _testDropsLinksBeyondReportedCount();
+    void _testAnyLinkByName();
 };

@@ -10,7 +10,9 @@ ToolIndicatorPage {
     QGCPalette { id: qgcPal }
     readonly property var system: CompanionController.companionState
     readonly property var network: CompanionController.hotspotState
-    readonly property bool writeAllowed: activeVehicle && !activeVehicle.armed && !activeVehicle.vehicleLinkManager.communicationLost
+    // The CC's heartbeat and lock decide, not a Vehicle: the FC may be silent (spec §5, §7).
+    readonly property bool writeAllowed: !!system.connected && !system.locked && !system.loadError
+    readonly property string blockedText: !system.connected ? qsTr("Mất kết nối tới Companion") : (system.loadError || system.lockReason || "")
     property string localError: ""
     property string draftSsid: ""
     property string draftCidr: ""
@@ -18,9 +20,8 @@ ToolIndicatorPage {
     property bool dirty: false
     property bool readbackRequested: false
     function ensureReadback() {
-        if (!system || !network) return
-        if (!system.connected && !network.available && !CompanionController.serialLinks.length) { readbackRequested = false; return }
-        if (!readbackRequested && activeVehicle && !system.pending) {
+        if (!system || !system.connected) { readbackRequested = false; return }
+        if (!readbackRequested && !system.pending) {
             readbackRequested = true
             CompanionController.requestCcParameters()
         }
@@ -32,12 +33,10 @@ ToolIndicatorPage {
         draftDhcp = !!network.dhcpEnabled
     }
     Component.onCompleted: { refreshDraft(); ensureReadback() }
-    onActiveVehicleChanged: { readbackRequested = false; ensureReadback() }
     onSystemChanged: ensureReadback()
     onNetworkChanged: { refreshDraft(); ensureReadback() }
     showExpand: true
     function display(value) { return value === undefined || value === null || value === "" ? qsTr("N/A") : String(value) }
-    readonly property var baudRates: ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1500000"]
     contentComponent: Component {
         ScrollView {
             implicitWidth: ScreenTools.defaultFontPixelWidth * 38
@@ -51,14 +50,16 @@ ToolIndicatorPage {
                 LabelledLabel { label: qsTr("Name"); labelText: page.display(page.system.name) }
                 LabelledLabel { label: qsTr("CPU (%)"); labelText: page.display(page.system.cpuUsage) }
                 LabelledLabel { label: qsTr("CPU temperature (°C)"); labelText: page.display(page.system.cpuTemp) }
+                QGCLabel { objectName: "companionBlockedText"; visible: !page.writeAllowed; text: page.blockedText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Repeater {
-                    model: 2
+                    model: CompanionController.serialLinks.length // every link the CC reports
                     delegate: ColumnLayout {
                         id: portRow
                         required property int index
                         readonly property var linkData: (CompanionController.serialLinks && portRow.index < CompanionController.serialLinks.length)
                                                         ? CompanionController.serialLinks[portRow.index]
                                                         : null
+                        readonly property int linkIndex: portRow.linkData ? portRow.linkData.index : -1 // the CC's link index
                         readonly property bool isFresh: portRow.linkData ? portRow.linkData.fresh : false
                         readonly property int currentBaud: portRow.linkData && portRow.linkData.baudrate !== undefined ? portRow.linkData.baudrate : 0
 
@@ -66,29 +67,36 @@ ToolIndicatorPage {
                         property int selectedBaud: 0
                         property string selectedPort: ""
                         property bool userEdited: false
-                        // The CC's detected devices, plus the one in use when it is not in that list.
-                        function portChoices() {
+                        // The port values of the combo: the CC's boot list (CC_SER_PORTS), the current port even when it
+                        // was absent at boot, and "" (off). label() is what the combo shows for each.
+                        function values() {
                             const list = CompanionController.availablePorts.slice()
                             if (portRow.currentPort !== "" && list.indexOf(portRow.currentPort) < 0) list.push(portRow.currentPort)
+                            list.push("")
                             return list
                         }
-
-                        function syncBaudCombo() {
-                            var target = userEdited ? selectedBaud : currentBaud
-                            if (target > 0 && baudCombo.model) {
-                                var idx = baudCombo.model.indexOf(String(target))
-                                if (idx !== -1 && baudCombo.currentIndex !== idx) {
-                                    baudCombo.currentIndex = idx
-                                }
-                            }
+                        function label(port) {
+                            if (port === "") return qsTr("Tắt")
+                            const owner = portRow.usedBy(port)
+                            if (owner !== "") return qsTr("%1 (dùng bởi %2)").arg(port).arg(owner)
+                            // An empty list is not read yet: nothing is marked absent before the CC reports it.
+                            const ports = CompanionController.availablePorts
+                            return ports.length && ports.indexOf(port) < 0 ? qsTr("%1 (không có)").arg(port) : port
+                        }
+                        // The name of another link on that port; "" = free. QGCComboBox cannot disable an item, so a choice
+                        // of a used port is refused with this name.
+                        function usedBy(port) {
+                            for (let i = 0; i < CompanionController.serialLinks.length; ++i)
+                                if (i !== portRow.index && port !== "" && CompanionController.serialLinks[i].port === port)
+                                    return CompanionController.serialLinks[i].name
+                            return ""
                         }
 
-                        onCurrentPortChanged: { if (!userEdited) { selectedPort = currentPort; portCombo.currentIndex = portCombo.model.indexOf(currentPort) } }
+                        onCurrentPortChanged: { if (!userEdited) selectedPort = currentPort }
 
                         onCurrentBaudChanged: {
-                            if (!userEdited && currentBaud > 0 && !baudCombo.popup.visible) {
+                            if (!userEdited && !baudCombo.popup.visible) {
                                 selectedBaud = currentBaud
-                                syncBaudCombo()
                             } else if (userEdited && currentBaud === selectedBaud) {
                                 userEdited = false
                             }
@@ -96,10 +104,7 @@ ToolIndicatorPage {
 
                         Component.onCompleted: {
                             selectedPort = currentPort
-                            if (currentBaud > 0) {
-                                selectedBaud = currentBaud
-                                syncBaudCombo()
-                            }
+                            selectedBaud = currentBaud
                         }
 
                         Layout.fillWidth: true
@@ -109,16 +114,26 @@ ToolIndicatorPage {
                         LabelledLabel { label: qsTr("Baudrate"); labelText: portRow.isFresh ? portRow.linkData.baudrate : qsTr("N/A") }
                         LabelledLabel { label: qsTr("TX (B/s)"); labelText: portRow.isFresh ? Math.round(portRow.linkData.txRate) : qsTr("N/A") }
                         LabelledLabel { label: qsTr("RX (B/s)"); labelText: portRow.isFresh ? Math.round(portRow.linkData.rxRate) : qsTr("N/A") }
+                        LabelledLabel { label: qsTr("RX errors (/s)"); labelText: portRow.isFresh ? portRow.linkData.rxErrors : qsTr("N/A") }
 
                         QGCComboBox {
                             id: portCombo
+                            objectName: "portCombo" + portRow.linkIndex
                             Layout.fillWidth: true
-                            model: portRow.portChoices()
-                            currentIndex: model.indexOf(portRow.currentPort)
+                            model: portRow.values().map(portRow.label)
+                            // On `model`: a new model resets the index to 0, and this binding then puts it back.
+                            currentIndex: model.indexOf(portRow.label(portRow.selectedPort))
                             enabled: page.writeAllowed && !page.system.pending && portRow.isFresh
                             onActivated: (idx) => {
-                                portRow.selectedPort = textAt(idx)
-                                portRow.userEdited = (portRow.selectedPort !== portRow.currentPort || portRow.selectedBaud !== portRow.currentBaud)
+                                const port = portRow.values()[idx]
+                                const owner = portRow.usedBy(port)
+                                if (owner !== "") {
+                                    page.localError = qsTr("Cổng đang được dùng bởi %1").arg(owner)
+                                    currentIndex = Qt.binding(() => model.indexOf(portRow.label(portRow.selectedPort)))
+                                    return
+                                }
+                                portRow.selectedPort = port
+                                portRow.userEdited = (port !== portRow.currentPort || portRow.selectedBaud !== portRow.currentBaud)
                             }
                         }
 
@@ -128,11 +143,12 @@ ToolIndicatorPage {
 
                             QGCComboBox {
                                 id: baudCombo
+                                objectName: "baudCombo" + portRow.linkIndex
                                 Layout.fillWidth: true
                                 enabled: page.writeAllowed && !page.system.pending
-                                model: page.baudRates
-
-                                Component.onCompleted: portRow.syncBaudCombo()
+                                // Read again with linkData: a link N's options come when the CC reports its parameters.
+                                model: portRow.linkData ? CompanionController.baudOptions(portRow.linkIndex) : []
+                                currentIndex: model.indexOf(String(portRow.selectedBaud)) // none until the CC reports a baud
 
                                 onActivated: (idx) => {
                                     var chosen = Number(textAt(idx))
@@ -143,17 +159,36 @@ ToolIndicatorPage {
 
                             QGCButton {
                                 id: updateBtn
+                                objectName: "updateLink" + portRow.linkIndex
+                                // The current values again still send an APPLY when one is due (a SAVE block, a lost APPLY).
+                                // current* first: reading one can run its change handler, which writes selected* (binding loop).
+                                readonly property bool same: portRow.currentBaud === portRow.selectedBaud && portRow.currentPort === portRow.selectedPort
+                                readonly property bool retry: same && !!page.system.needsApply
                                 Layout.alignment: Qt.AlignVCenter
                                 iconSource: "/custom/images/system-update.png"
-                                text: qsTr("Update")
-                                primary: portRow.selectedBaud > 0 && (portRow.selectedBaud !== portRow.currentBaud || portRow.selectedPort !== portRow.currentPort)
-                                enabled: page.writeAllowed && !page.system.pending && portRow.selectedBaud > 0 && (portRow.selectedBaud !== portRow.currentBaud || portRow.selectedPort !== portRow.currentPort)
+                                text: retry ? qsTr("Áp dụng lại") : qsTr("Update")
+                                primary: portRow.selectedBaud > 0 && (!same || retry)
+                                enabled: page.writeAllowed && !page.system.pending && portRow.selectedBaud > 0 && (!same || retry)
                                 onClicked: {
-                                    page.localError = CompanionController.setLinkConfig(portRow.index, portRow.selectedPort, portRow.selectedBaud) ? "" : (page.system.linkError || qsTr("Request unavailable"))
+                                    page.localError = CompanionController.setLinkConfig(portRow.linkIndex, portRow.selectedPort, portRow.selectedBaud) ? "" : (page.system.linkError || qsTr("Request unavailable"))
                                 }
                             }
                         }
                     }
+                }
+                QGCLabel { objectName: "linksUnsavedNote"; visible: !!page.system.unsaved; text: qsTr("Đã áp dụng, chưa lưu — reboot sẽ về cấu hình cũ"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                QGCButton {
+                    objectName: "saveLinks"
+                    visible: !!page.system.unsaved
+                    text: qsTr("Lưu")
+                    enabled: page.writeAllowed && !page.system.pending
+                    onClicked: page.localError = CompanionController.saveCompanionGroup("links") ? "" : qsTr("Không gửi được lệnh lưu")
+                }
+                QGCButton {
+                    objectName: "cancelCompanionWait"
+                    visible: !!page.system.waitingReconnect
+                    text: qsTr("Hủy chờ")
+                    onClicked: CompanionController.cancelCompanionWait()
                 }
                 QGCLabel { text: qsTr("Networking"); font.bold: true }
                 LabelledLabel { label: qsTr("WiFi"); labelText: page.display(page.network.wifiName) }
@@ -162,7 +197,7 @@ ToolIndicatorPage {
                 LabelledLabel { label: qsTr("Hotspot status"); labelText: page.network.fresh ? (page.network.open ? qsTr("ON") : qsTr("OFF")) : qsTr("N/A") }
                 LabelledLabel { label: qsTr("IP/CIDR"); labelText: page.display(page.network.ipCidr) }
                 LabelledLabel { label: qsTr("DHCP server"); labelText: page.network.available ? (page.network.dhcpEnabled ? qsTr("ON") : qsTr("OFF")) : qsTr("N/A") }
-                QGCLabel { text: page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                QGCLabel { text: page.system.linkError || page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true } // the CC's reason first
                 CompanionOperationLog { operation: page.network.operation }
             }
         }
@@ -204,15 +239,22 @@ ToolIndicatorPage {
                 }
             }
             QGCButton {
-                text: qsTr("Apply")
+                text: page.network.needsApply ? qsTr("Áp dụng lại") : qsTr("Apply")
                 enabled: page.writeAllowed && page.network.available && !page.network.pending
                 onClicked: {
                     page.localError = CompanionController.applyHotspot({ssid: ssid.text, password: password.text, ipCidr: cidr.text, dhcpEnabled: page.draftDhcp}) ? "" : qsTr("Hotspot request unavailable")
                     password.clear()
                 }
             }
+            QGCLabel { visible: !!page.network.unsaved; text: qsTr("Đã áp dụng, chưa lưu — reboot sẽ về cấu hình cũ"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            QGCButton {
+                objectName: "saveHotspot"
+                visible: !!page.network.unsaved
+                text: qsTr("Lưu")
+                enabled: page.writeAllowed && !page.system.pending
+                onClicked: page.localError = CompanionController.saveCompanionGroup("hotspot") ? "" : qsTr("Không gửi được lệnh lưu")
+            }
             QGCLabel { text: page.network.error || page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            QGCLabel { visible: !page.writeAllowed; text: page.activeVehicle && page.activeVehicle.armed ? qsTr("Configuration locked while armed") : qsTr("Configuration requires an active vehicle link"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         }
     }
 }
