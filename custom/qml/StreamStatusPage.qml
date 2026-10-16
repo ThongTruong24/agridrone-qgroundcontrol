@@ -46,7 +46,9 @@ ToolIndicatorPage {
     }
     function ensureReadback() {
         if (!cam.available) { readbackRequested = false; return }
-        if (!readbackRequested && !cam.pending) {
+        // The list is loaded at session start and resynced every 30 s: ask only when a value is really missing.
+        const known = cam.configured && cam.configured.resolution !== undefined && cam.configured.resolution !== null
+        if (!known && !readbackRequested && !cam.pending) {
             readbackRequested = true
             CompanionController.requestCcParameters()
         }

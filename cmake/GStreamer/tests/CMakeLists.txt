@@ -5,6 +5,7 @@ set(_qgc_findmod_tests
     test_components
     test_download
     test_layout
+    test_android_pkgconfig_alias
     test_plugin_scan
     test_plugin_policy
     test_version_policy

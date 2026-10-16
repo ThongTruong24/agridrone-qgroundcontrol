@@ -457,3 +457,29 @@ void CompanionParamServiceTest::_testCatalogLoadErrorHasNoParameters()
         QVERIFY(service.options("CC_L0_BAUD").isEmpty());
     }
 }
+
+// 2026-10-16: every PARAM_EXT_VALUE counted toward the LIST (repeats, another client's LIST, values pushed after an
+// ACK), so the load could end with parameters still missing; on the vehicle a second LIST re-sent 17 values to all.
+void CompanionParamServiceTest::_testListCompletesOnDistinctIndicesOnly()
+{
+    CompanionParamService service;
+    service.setTransport({1, 0, [](const mavlink_message_t&) { return true; }});
+    service.requestParameters();
+    QVERIFY(service.isLoading());
+    for (int i = 0; i < 3; ++i)
+        QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 460800, 2, 0)));
+    QVERIFY(service.isLoading()); // index 1 has not arrived yet
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L1_BAUD", 115200, 2, 1)));
+    QVERIFY(!service.isLoading());
+}
+
+// 2026-10-16: an ACK the CC sends without a value (it had none confirmed) carries zeros; QGC took them as the live value.
+void CompanionParamServiceTest::_testRefusedAckKeepsTheKnownValue()
+{
+    CompanionParamService service;
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 460800, 16, 1)));
+    QVERIFY(service.handleMavlinkMessage(packParamExtAck(1, 191, "CC_L0_BAUD", 0, 2 /* FAILED */)));
+    QCOMPARE(service.confirmedValue("CC_L0_BAUD").toUInt(), 460800u);
+    QVERIFY(service.handleMavlinkMessage(packParamExtAck(1, 191, "CC_L0_BAUD", 921600, 0 /* ACCEPTED */)));
+    QCOMPARE(service.confirmedValue("CC_L0_BAUD").toUInt(), 921600u);
+}

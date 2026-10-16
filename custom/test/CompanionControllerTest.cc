@@ -1885,12 +1885,16 @@ void CompanionVehicleLifecycleTest::_testStreamReasonTable()
     primeParam(controller, system, "CC_VIS_RES", QString("640x480"));
     QCOMPARE(controller.streamReason("vision")["code"].toInt(), 0);
     QCOMPARE(controller.visionStreamState()["reason"].toMap()["code"].toInt(), 0);
+    // 2026-10-16: every popup open and the 30 s resync reloaded the list and greyed out values that were already known
+    controller.requestCcParameters();
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 0);
 
     primeLinksAndParams(controller, system, mockLink());
     QVERIFY(controller.setLinkConfig(1, "ttyUSB1", 57600)); // an operation started from the Companion popup
     QCOMPARE(controller.streamReason("vision")["code"].toInt(), 9);
     controller.requestCcParameters();
-    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 6);
+    // Replaces the old expectation 6 (2026-10-16): it pinned the grey-out while CC_VIS_RES was already confirmed.
+    QCOMPARE(controller.streamReason("vision")["code"].toInt(), 9);
 }
 
 // 2026-10-12: the UART device could only be changed from the deleted Settings page.

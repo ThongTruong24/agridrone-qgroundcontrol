@@ -164,7 +164,7 @@ void CompanionParamService::resetState()
     _isLoading = false;
     _loadingTimeoutTimer->stop();
     _expectedCount = 0;
-    _receivedCount = 0;
+    _receivedIndices.clear();
 
     for (const QString& name : _order) {
         _isLiveSynced[name] = false;
@@ -244,7 +244,7 @@ void CompanionParamService::requestParameters()
         return; // not loading: nothing will answer, and loading refuses every operation
     }
     _isLoading = true;
-    _receivedCount = 0;
+    _receivedIndices.clear();
     _expectedCount = 0;
     _loadingTimeoutTimer->start();
     emit isLoadingChanged();
@@ -514,7 +514,7 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
             }
         }
 
-        _receivedCount++;
+        _receivedIndices.insert(pval.param_index);
         _expectedCount = pval.param_count;
 
         // Reset timer on each incoming param
@@ -522,7 +522,7 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
             _loadingTimeoutTimer->start();
         }
 
-        if (_expectedCount > 0 && _receivedCount >= _expectedCount) {
+        if (_expectedCount > 0 && _receivedIndices.size() >= _expectedCount) {
             _isLoading = false;
             _loadingTimeoutTimer->stop();
             emit isLoadingChanged();
@@ -543,7 +543,8 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
         QString paramId = QString::fromUtf8(idBuf).trimmed();
 
         QVariant ackVal = _decodeValue(pack.param_value, pack.param_type);
-        if (pack.param_result != PARAM_ACK_IN_PROGRESS) {
+        // Only an ACCEPTED ACK carries a value the CC confirmed; a refusal may carry zeros (CC had none) and changes nothing.
+        if (pack.param_result == PARAM_ACK_ACCEPTED) {
             _liveValues[paramId] = ackVal;
             _isLiveSynced[paramId] = true;
         }
@@ -577,7 +578,7 @@ void CompanionParamService::_onLoadingTimeout()
     if (_isLoading) {
         _isLoading = false;
         emit isLoadingChanged();
-        emit logMessage("PARAM", "WARN", QString("Param request timed out (%1 received)").arg(_receivedCount), 4);
+        emit logMessage("PARAM", "WARN", QString("Param request timed out (%1 received)").arg(_receivedIndices.size()), 4);
     }
 }
 

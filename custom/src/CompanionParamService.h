@@ -7,6 +7,7 @@
 #include <QtCore/QVariantList>
 #include <QtCore/QVariantMap>
 #include <QtCore/QMap>
+#include <QtCore/QSet>
 #include <QtCore/QTimer>
 #include <functional>
 
@@ -127,7 +128,7 @@ private:
     bool _loadError = false;
     int _modifiedCount = 0;
     uint16_t _expectedCount = 0;
-    uint16_t _receivedCount = 0;
+    QSet<uint16_t> _receivedIndices; // a LIST is done when every index arrived, whatever else is resent
     QTimer* _loadingTimeoutTimer = nullptr;
 
     QStringList _groups;

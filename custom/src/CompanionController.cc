@@ -984,8 +984,10 @@ QVariantMap CompanionController::streamReason(const QString& stream) const
     const int version = _streamTelemetry.value(stream).value("version").toInt();
     if (version != 1) return r(5, tr("%1 trên Companion là bản cũ (config_version %2), cần cập nhật").arg(label).arg(version));
     if (_paramService->loadError()) return r(7, catalogError());
-    if (_paramService->isLoading()) return r(6, tr("Đang tải tham số Companion…"));
-    if (!_paramService->confirmedValue(camera ? "CC_CAM_RES" : "CC_VIS_RES").isValid()) return r(7, tr("%1 chưa trả tham số cấu hình").arg(label));
+    // Only the first load blocks: a resync or a popup open reloads values the CC already confirmed.
+    const bool haveValues = _paramService->confirmedValue(camera ? "CC_CAM_RES" : "CC_VIS_RES").isValid();
+    if (_paramService->isLoading() && !haveValues) return r(6, tr("Đang tải tham số Companion…"));
+    if (!haveValues) return r(7, tr("%1 chưa trả tham số cấu hình").arg(label));
     // Camera and Vision are outside the arming lock (2026-10-13), so there is no "armed" reason (code 8) any more.
     if (_toolbarOperation && _toolbarOperation->origin != QLatin1String("stream"))
         return r(9, tr("Companion đang xử lý thao tác khác (%1)").arg(_toolbarOperation->group));
