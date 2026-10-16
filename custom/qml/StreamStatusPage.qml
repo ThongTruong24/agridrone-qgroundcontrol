@@ -192,6 +192,22 @@ ToolIndicatorPage {
                         value: page.cam.configured ? page.cam.configured.codec : undefined
                         presets: page.codecs(page.cam)
                     }
+                    QGCCheckBoxSlider {
+                        id: flipSwitch
+                        objectName: "cameraFlipSwitch"
+                        Layout.fillWidth: true
+                        text: qsTr("Lật ảnh 180°")
+                        // Not "rotation": that would override QQuickItem::rotation and turn the switch itself upside down.
+                        readonly property var configuredRotation: page.cam.configured ? page.cam.configured.rotation : undefined
+                        checked: flipSwitch.configuredRotation === 180
+                        enabled: page.editable && flipSwitch.configuredRotation !== undefined && flipSwitch.configuredRotation !== null
+                        // The switch follows the CC's confirmed value: the click is sent, then the binding comes back, so it
+                        // moves when the readback arrives and stays put when the CC refuses.
+                        onClicked: {
+                            page.send("camera", "CC_CAM_ROT", flipSwitch.checked ? 180 : 0)
+                            flipSwitch.checked = Qt.binding(() => flipSwitch.configuredRotation === 180)
+                        }
+                    }
                     UrlField { stream: "camera"; paramId: "CC_CAM_PUB_URL"; configured: page.cam.configuredUrl || ""; objectNameOfEdit: "rtspDestination" }
 
                     QGCLabel { text: qsTr("Cấu hình Vision"); font.bold: true; objectName: "visionConfig" }

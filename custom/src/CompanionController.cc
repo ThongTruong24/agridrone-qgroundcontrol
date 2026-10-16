@@ -932,10 +932,13 @@ QVariantMap CompanionController::streamState(const QString& stream) const
         state["supportedCodecs"] =
             _streamTelemetry.value("camera").value("supportedCodecs");  // the camera encodes both streams
     }
-    state["configured"] = QVariantMap{{"resolution", value(camera ? "CC_CAM_RES" : "CC_VIS_RES")},
-                                      {"fps", value(camera ? "CC_CAM_FPS" : "CC_VIS_FPS")},
-                                      {"bitrate", value(camera ? "CC_CAM_BR" : "CC_VIS_BR")},
-        {"codec", value(camera ? "CC_CAM_CODEC" : "CC_VIS_CODEC")}};
+    QVariantMap configured{{"resolution", value(camera ? "CC_CAM_RES" : "CC_VIS_RES")},
+                           {"fps", value(camera ? "CC_CAM_FPS" : "CC_VIS_FPS")},
+                           {"bitrate", value(camera ? "CC_CAM_BR" : "CC_VIS_BR")},
+                           {"codec", value(camera ? "CC_CAM_CODEC" : "CC_VIS_CODEC")}};
+    if (camera)
+        configured["rotation"] = value("CC_CAM_ROT");
+    state["configured"] = configured;
     const auto list = [&](const QString& id) {
         QStringList items;
         for (const auto& item : value(id).toString().split(',', Qt::SkipEmptyParts)) {
@@ -1374,7 +1377,7 @@ bool CompanionController::setStreamParameter(const QString& stream, const QStrin
     if (!camera && stream != "vision")
         return false;
     const QStringList allowed =
-        camera ? QStringList{"CC_CAM_RES", "CC_CAM_FPS", "CC_CAM_BR", "CC_CAM_CODEC", "CC_CAM_PUB_URL"}
+        camera ? QStringList{"CC_CAM_RES", "CC_CAM_FPS", "CC_CAM_BR", "CC_CAM_CODEC", "CC_CAM_PUB_URL", "CC_CAM_ROT"}
         : QStringList{"CC_VIS_RES", "CC_VIS_FPS", "CC_VIS_BR", "CC_VIS_CODEC", "CC_VIS_OUT_URL", "CC_VIS_CONF"};
     // camera_streamer owns the Vision video parameters too; only the inference ones need the Vision node.
     const bool visionNode = id == "CC_VIS_FPS" || id == "CC_VIS_CONF";

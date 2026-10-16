@@ -657,6 +657,15 @@ void CompanionControllerTest::_testToolbarLegacyAndIndependentStreams()
     QCOMPARE(state["configured"].toMap()["fps"].toDouble(), 5.0);
     QVERIFY(!controller.setStreamParameter("camera", "CC_CAM_PUB_URL", "rtmp://invalid"));
     QVERIFY(!controller.setStreamParameter("vision", "CC_CAM_FPS", 15));
+    // 2026-10-16 (spec camera-flip-toggle): the popup's flip switch reads the CC's confirmed CC_CAM_ROT (180 = flipped;
+    // a key that is missing would read 0, so 180 is what proves the value comes through)
+    char rotValue[128]{};
+    const uint32_t rotation = 180;
+    std::memcpy(rotValue, &rotation, sizeof(rotation));
+    mavlink_msg_param_ext_value_pack(42, 191, &message, "CC_CAM_ROT", rotValue, MAV_PARAM_EXT_TYPE_UINT32, 1, 0);
+    controller.processMessageForTest(message);
+    QCOMPARE(controller.cameraStreamState()["configured"].toMap()["rotation"].toUInt(), 180U);
+    QVERIFY(!controller.setStreamParameter("vision", "CC_CAM_ROT", 0));  // a camera parameter, not a Vision one
 }
 
 void CompanionControllerTest::_testToolbarPopupsLoad()
@@ -672,7 +681,7 @@ void CompanionControllerTest::_testToolbarPopupsLoad()
         if (QString(name) == "StreamStatusPage") {
             // 2026-10-13: one merged page: the mode switch, Cancel, and both settings groups with their addresses.
             for (const char* child : {"streamModeSwitch", "cancelStreamOperation", "videoConfig", "visionConfig",
-                                      "rtspDestination", "visionRtspDestination"})
+                                      "rtspDestination", "visionRtspDestination", "cameraFlipSwitch"})
                 QVERIFY2(page->findChild<QObject*>(child), child);
         }
     }
