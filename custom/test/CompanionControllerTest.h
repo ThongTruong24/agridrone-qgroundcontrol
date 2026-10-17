@@ -66,6 +66,7 @@ class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
 private slots:
     void _testSingleMessageDispatch();
     void _testAiVisionTransmission();
+    void _testAiVisionUsesCompanionLinkWithVehicle();
     void _testAiVisionTrackPointTransmission();
     void _testDisconnectAndReconnectReset();
     void _testReadbackLinkHotspotAndOpOutlivesVehicle();

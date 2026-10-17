@@ -372,8 +372,10 @@ void CompanionController::setFollowingEnabled(bool enabled)
 
 void CompanionController::_sendAiVisionControl()
 {
-    (void) Companion::sendAiVisionControl(_activeVehicle.data(), _boundingBoxEnabled, _trackingEnabled,
-                                          _followingEnabled);
+    if (_activeVehicle && _activeVehicle->id() != _sourceSystemId) {
+        return;
+    }
+    (void) Companion::sendAiVisionControl(_ccLink.lock(), _boundingBoxEnabled, _trackingEnabled, _followingEnabled);
 }
 
 bool CompanionController::sendAiVisionTrackPoint(double normalizedX, double normalizedY, double normalizedRadius)

@@ -54,10 +54,9 @@ bool sendCommand(Vehicle* vehicle, uint8_t targetSystem, MAV_CMD command, float 
     return sendMessage(vehicle, link, msg);
 }
 
-bool sendAiVisionControl(Vehicle* vehicle, bool boundingBox, bool tracking, bool following)
+bool sendAiVisionControl(const SharedLinkInterfacePtr& companionLink, bool boundingBox, bool tracking, bool following)
 {
-    const SharedLinkInterfacePtr link = resolveLink(vehicle);
-    if (!link) {
+    if (!companionLink || !companionLink->isConnected()) {
         return false;
     }
     mavlink_cc_ai_vision_control_t payload{};
@@ -66,9 +65,9 @@ bool sendAiVisionControl(Vehicle* vehicle, bool boundingBox, bool tracking, bool
     payload.following = following ? 1 : 0;
     mavlink_message_t message{};
     mavlink_msg_cc_ai_vision_control_encode_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                                 MAVLinkProtocol::getComponentId(), link->mavlinkChannel(), &message,
-                                                 &payload);
-    return sendMessage(vehicle, link, message);
+                                                 MAVLinkProtocol::getComponentId(), companionLink->mavlinkChannel(),
+                                                 &message, &payload);
+    return sendMessage(nullptr, companionLink, message);
 }
 
 bool sendTrackPoint(Vehicle* vehicle, uint8_t targetSystem, double x, double y, double radius,

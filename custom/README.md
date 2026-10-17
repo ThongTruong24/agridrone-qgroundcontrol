@@ -95,6 +95,17 @@ Giữ tag `v5.1.4` khi chuyển repo sang máy khác để lấy đúng số phi
 Giao diện bay hỗ trợ Bounding Box, Tracking và Following. Bật Bounding Box trước khi dùng
 Tracking/Following; chạm một điểm trên video để gửi tọa độ bám mục tiêu.
 
+`CC_AI_VISION_CONTROL` (42015) gửi ba cờ qua link nhận heartbeat Companion (component 191),
+cùng link dùng để đọc/ghi tham số Pi. Luồng gửi không phụ thuộc FC hoặc Vehicle và không
+chọn link UDP connected đầu tiên hay link chính của FC. QGC gửi khi đổi cờ và định kỳ 1 Hz;
+trước khi biết link Companion, các cờ chỉ được giữ trong ứng dụng. Khi link Companion kết nối
+lại và có heartbeat mới, QGC tiếp tục gửi trạng thái hiện tại. Message và topic ROS2
+`/cc/ai_vision_control` trên Pi giữ nguyên.
+
+Kiểm tra trên MK15 với link UDP tới IP Ethernet của Pi (ví dụ `192.168.144.141:14550`):
+không nối FC, giữ thêm một link UDP khác đang mở, bật/tắt ba cờ và kiểm tra topic ROS2 trên Pi.
+Lặp lại khi nối FC; cả hai trường hợp phải đi qua link Companion.
+
 ## Tài liệu chính thức
 
 - [Build QGroundControl](https://docs.qgroundcontrol.com/master/en/qgc-dev-guide/getting_started/)

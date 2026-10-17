@@ -43,8 +43,8 @@ SharedLinkInterfacePtr resolveLink(Vehicle* vehicle);
 bool sendMessage(Vehicle* vehicle, const SharedLinkInterfacePtr& link, const mavlink_message_t& msg);
 bool sendCommand(Vehicle* vehicle, uint8_t targetSystem, MAV_CMD command, float param1, float param2 = 0.0f);
 
-/// Uses an open link even before a Vehicle or Companion heartbeat is available.
-bool sendAiVisionControl(Vehicle* vehicle, bool boundingBox, bool tracking, bool following);
+/// Uses the Companion heartbeat link, independently of the Vehicle primary link.
+bool sendAiVisionControl(const SharedLinkInterfacePtr& companionLink, bool boundingBox, bool tracking, bool following);
 /// Sends once; targetSystem may be 0 before the Companion is known, with no Vehicle required.
 bool sendTrackPoint(Vehicle* vehicle, uint8_t targetSystem, double x, double y, double radius,
                     const SharedLinkInterfacePtr& companionLink = {});
