@@ -4,6 +4,9 @@
 #include <QtCore/QFile>
 #include <QtQml/QQmlApplicationEngine>
 
+#include "CompanionShellController.h"
+#include "QmlComponentInfo.h"
+
 Q_APPLICATION_STATIC(CustomPlugin, _customPluginInstance);
 
 CustomPlugin::CustomPlugin(QObject* parent) : QGCCorePlugin(parent) {}
@@ -11,6 +14,28 @@ CustomPlugin::CustomPlugin(QObject* parent) : QGCCorePlugin(parent) {}
 QGCCorePlugin* CustomPlugin::instance()
 {
     return _customPluginInstance();
+}
+
+void CustomPlugin::init()
+{
+    QGCCorePlugin::init();
+    // Not in the constructor: the controller needs MAVLinkProtocol and MultiVehicleManager, which exist after start-up.
+    companionShell();
+}
+
+CompanionShellController* CustomPlugin::companionShell() const
+{
+    if (_companionShell == nullptr) {
+        _companionShell = new CompanionShellController(const_cast<CustomPlugin*>(this));
+    }
+    return _companionShell;
+}
+
+void CustomPlugin::cleanup()
+{
+    delete _companionShell;
+    _companionShell = nullptr;
+    QGCCorePlugin::cleanup();
 }
 
 const QVariantList& CustomPlugin::toolBarIndicators()
@@ -22,6 +47,19 @@ const QVariantList& CustomPlugin::toolBarIndicators()
         return result;
     }();
     return indicators;
+}
+
+const QVariantList& CustomPlugin::analyzePages()
+{
+    static const QVariantList pages = [this]() {
+        auto result = QGCCorePlugin::analyzePages();
+        // Works with no Vehicle: the shell reaches the companion host over its own MAVLink route.
+        result.append(QVariant::fromValue(new QmlComponentInfo(
+            QObject::tr("Companion Shell"), QUrl(QStringLiteral("qrc:/qml/Custom/AgriDrone/CompanionShellPage.qml")),
+            QUrl::fromUserInput(QStringLiteral("qrc:/qmlimages/MAVLinkConsoleIcon.svg")), nullptr, false)));
+        return result;
+    }();
+    return pages;
 }
 
 QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
