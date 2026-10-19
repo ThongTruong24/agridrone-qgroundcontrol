@@ -372,19 +372,36 @@ void CompanionController::setFollowingEnabled(bool enabled)
 
 void CompanionController::_sendAiVisionControl()
 {
-    (void) Companion::sendAiVisionControl(_activeVehicle.data(), _boundingBoxEnabled, _trackingEnabled,
-                                          _followingEnabled);
+    // Through the CC session (like every CC command), not the Vehicle: the CC works while the FC is down.
+    const auto link = _ccLink.lock();
+    mavlink_message_t message{};
+    mavlink_msg_cc_ai_vision_control_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
+                                               MAVLinkProtocol::getComponentId(), link ? link->mavlinkChannel() : 0,
+                                               &message, _boundingBoxEnabled, _trackingEnabled, _followingEnabled);
+    (void) sendToCompanion(message);
 }
 
 bool CompanionController::sendAiVisionTrackPoint(double normalizedX, double normalizedY, double normalizedRadius)
 {
     if (!_boundingBoxEnabled || !std::isfinite(normalizedX) || !std::isfinite(normalizedY) ||
         !std::isfinite(normalizedRadius) || normalizedX < 0.0 || normalizedX > 1.0 || normalizedY < 0.0 ||
-        normalizedY > 1.0 || normalizedRadius < 0.0 || normalizedRadius > 1.0 || !_activeVehicle) {
+        normalizedY > 1.0 || normalizedRadius < 0.0 || normalizedRadius > 1.0 || _sourceSystemId < 0) {
         return false;
     }
 
-    return Companion::sendTrackPoint(_activeVehicle.data(), normalizedX, normalizedY, normalizedRadius);
+    const auto link = _ccLink.lock();
+    mavlink_command_long_t payload{};
+    payload.target_system = static_cast<uint8_t>(_sourceSystemId);
+    payload.target_component = kCompanionCompId;
+    payload.command = MAV_CMD_CAMERA_TRACK_POINT;
+    payload.param1 = static_cast<float>(normalizedX);
+    payload.param2 = static_cast<float>(normalizedY);
+    payload.param3 = static_cast<float>(normalizedRadius);
+    // Point selection is an event: transmit once without the ACK/retry queue.
+    mavlink_message_t message{};
+    mavlink_msg_command_long_encode_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
+                                         link ? link->mavlinkChannel() : 0, &message, &payload);
+    return sendToCompanion(message);
 }
 
 void CompanionController::_logMavlink(const QString& category, const QString& direction, const QString& message,

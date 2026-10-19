@@ -7,20 +7,72 @@
 #include <QtTest/QSignalSpy>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
+#include <QtNetwork/QNetworkDatagram>
+#include <QtNetwork/QUdpSocket>
 #include <cstring>
 #include <limits>
 #include <memory>
 
 #include "ColoredSvgImageProvider.h"
 #include "CompanionController.h"
+#include "LinkManager.h"
 #include "MAVLinkProtocol.h"
 #include "MockLink.h"
 #include "QGCMAVLink.h"
+#include "UDPLink.h"
 #include "Vehicle.h"
 #include "VehicleLinkManager.h"
 
 UT_REGISTER_TEST(CompanionControllerTest, TestLabel::Unit, TestLabel::Vehicle)
 UT_REGISTER_TEST(CompanionVehicleLifecycleTest, TestLabel::Integration, TestLabel::Vehicle)
+
+namespace {
+// A UDP link whose only peer is a local socket, so a test sees exactly what QGC sent on that link.
+// Ported from agridrone-qgroundcontrol be5e437 (2026-10-17).
+struct UdpPeerLink
+{
+    QUdpSocket socket;
+    QList<mavlink_message_t> controls;
+    SharedLinkConfigurationPtr config;
+
+    UdpPeerLink(QObject* context, const QString& name)
+    {
+        QVERIFY(socket.bind(QHostAddress(QHostAddress::LocalHost), 0));
+        QObject::connect(&socket, &QUdpSocket::readyRead, context, [this]() {
+            while (socket.hasPendingDatagrams()) {
+                const QByteArray bytes = socket.receiveDatagram().data();
+                // The UDP hole punch is a partial frame; parse each datagram on its own.
+                mavlink_message_t receiveBuffer{};
+                mavlink_status_t receiveStatus{};
+                for (const unsigned char byte : bytes) {
+                    mavlink_message_t message{};
+                    mavlink_status_t status{};
+                    if (mavlink_frame_char_buffer(&receiveBuffer, &receiveStatus, byte, &message, &status) ==
+                            MAVLINK_FRAMING_OK &&
+                        message.msgid == MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) {
+                        controls.append(message);
+                    }
+                }
+            }
+        });
+        auto udp = std::make_shared<UDPConfiguration>(name);
+        udp->setDynamic(true);
+        udp->setLocalPort(0);
+        udp->addHost(QStringLiteral("127.0.0.1"), socket.localPort());
+        config = udp;
+        QVERIFY(LinkManager::instance()->createConnectedLink(config));
+        QTRY_VERIFY_WITH_TIMEOUT(config->link() && config->link()->isConnected(), TestTimeout::shortMs());
+    }
+
+    ~UdpPeerLink()
+    {
+        if (config && config->link()) {
+            LinkManager::instance()->disconnectLink(config->link());
+        }
+    }
+};
+}  // namespace
 
 namespace {
 template <std::size_t Size>
@@ -2908,6 +2960,66 @@ void CompanionControllerTest::_testAiVisionTrackPointGuards()
     QVERIFY(!controller.sendAiVisionTrackPoint(0.5, 0.5, 0.1));
 }
 
+// 2026-10-19: Bounding Box did nothing while the FC was down (no Vehicle): the AI Vision switches sent nothing to the CC.
+void CompanionControllerTest::_testAiVisionWithoutVehicle()
+{
+    CompanionController controller;
+    QList<mavlink_message_t> sent;
+    controller.setSendHookForTest([&](const mavlink_message_t& m) { sent.append(m); return true; });
+    sendCompanionHeartbeat(controller, 1);
+
+    const auto lastControl = [&](mavlink_cc_ai_vision_control_t& control) {
+        for (auto it = sent.crbegin(); it != sent.crend(); ++it) {
+            if (it->msgid == MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) {
+                mavlink_msg_cc_ai_vision_control_decode(&*it, &control);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    sent.clear();
+    controller.setBoundingBoxEnabled(true);
+    mavlink_cc_ai_vision_control_t control{};
+    QVERIFY(lastControl(control));
+    QCOMPARE(control.bounding_box, quint8(1));
+    QCOMPARE(control.tracking, quint8(0));
+
+    controller.setTrackingEnabled(true);
+    QVERIFY(lastControl(control));
+    QCOMPARE(control.tracking, quint8(1));
+
+    sent.clear();
+    QVERIFY(controller.sendAiVisionTrackPoint(0.25, 0.5, 0.03125));
+    QCOMPARE(sent.size(), 1);
+    QCOMPARE(sent.first().msgid, quint32(MAVLINK_MSG_ID_COMMAND_LONG));
+    mavlink_command_long_t command{};
+    mavlink_msg_command_long_decode(&sent.first(), &command);
+    QCOMPARE(command.command, quint16(MAV_CMD_CAMERA_TRACK_POINT));
+    QCOMPARE(command.target_system, quint8(1));
+    QCOMPARE(command.target_component, quint8(191));
+    QCOMPARE(command.param1, 0.25f);
+}
+
+// 2026-10-19: with the FC down and another UDP link open first, the control went (or would go) to the wrong link.
+void CompanionControllerTest::_testAiVisionOnlyOnCompanionLinkWithoutVehicle()
+{
+    CompanionController controller;
+    UdpPeerLink unrelated(this, QStringLiteral("Unrelated first UDP link"));
+    UdpPeerLink companion(this, QStringLiteral("Companion without FC"));
+
+    sendCompanionHeartbeat(controller, 42, companion.config->link());
+    controller.setBoundingBoxEnabled(true);
+    controller.setFollowingEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(companion.controls.size() >= 2, TestTimeout::mediumMs());
+    mavlink_cc_ai_vision_control_t control{};
+    mavlink_msg_cc_ai_vision_control_decode(&companion.controls.last(), &control);
+    QCOMPARE(control.bounding_box, quint8(1));
+    QCOMPARE(control.following, quint8(1));
+    QVERIFY(unrelated.controls.isEmpty());
+    QVERIFY(!MultiVehicleManager::instance()->activeVehicle());
+}
+
 void CompanionVehicleLifecycleTest::_testSingleMessageDispatch()
 {
     CompanionController controller;
@@ -2928,6 +3040,7 @@ void CompanionVehicleLifecycleTest::_testAiVisionTransmission()
     CompanionController controller;
     _connectMockLinkNoInitialConnectSequence();
     QVERIFY(vehicle());
+    sendCompanionHeartbeat(controller, vehicle()->id(), mockLink());  // the AI Vision state goes through the CC session
 
     QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1, 3000);
 
@@ -2976,8 +3089,39 @@ void CompanionVehicleLifecycleTest::_testAiVisionTransmission()
     QCOMPARE(controller.followingEnabled(), true);
 
     _connectMockLinkNoInitialConnectSequence();
+    sendCompanionHeartbeat(controller, vehicle()->id(), mockLink());
     QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL) >= 1, 3000);
     verifyLastState(1, 0, 1);
+}
+
+// Ported from be5e437: the control follows the CC heartbeat link, never the FC's link, and stops when that link is lost.
+void CompanionVehicleLifecycleTest::_testAiVisionUsesCompanionLinkWithVehicle()
+{
+    CompanionController controller;
+    _connectMockLinkNoInitialConnectSequence();
+    QVERIFY(vehicle());
+    UdpPeerLink companion(this, QStringLiteral("Companion separate from FC"));
+    QVERIFY(companion.config->link() != vehicle()->vehicleLinkManager()->primaryLink().lock().get());
+
+    sendCompanionHeartbeat(controller, vehicle()->id(), companion.config->link());
+    mockLink()->clearReceivedMavlinkMessageCounts();
+    controller.setBoundingBoxEnabled(true);
+    controller.setFollowingEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(companion.controls.size() >= 2, TestTimeout::mediumMs());
+    mavlink_cc_ai_vision_control_t control{};
+    mavlink_msg_cc_ai_vision_control_decode(&companion.controls.last(), &control);
+    QCOMPARE(control.bounding_box, quint8(1));
+    QCOMPARE(control.following, quint8(1));
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL), 0);
+
+    // Losing the CC link must not redirect the control to the still-connected FC link.
+    LinkManager::instance()->disconnectLink(companion.config->link());
+    QTRY_VERIFY_WITH_TIMEOUT(!companion.config->link(), TestTimeout::shortMs());
+    QSignalSpy ticks(&controller._aiVisionControlTimer, &QTimer::timeout);
+    controller._aiVisionControlTimer.start(20);
+    QTRY_VERIFY_WITH_TIMEOUT(ticks.count() >= 2, TestTimeout::shortMs());
+    controller._aiVisionControlTimer.stop();
+    QCOMPARE(mockLink()->receivedMavlinkMessageCount(MAVLINK_MSG_ID_CC_AI_VISION_CONTROL), 0);
 }
 
 void CompanionVehicleLifecycleTest::_testAiVisionTrackPointTransmission()
@@ -3001,6 +3145,7 @@ void CompanionVehicleLifecycleTest::_testAiVisionTrackPointTransmission()
     QVERIFY(!controller.sendAiVisionTrackPoint(0.5, 0.5, 0.1));
     QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_CAMERA_TRACK_POINT, 191), 0);
 
+    sendCompanionHeartbeat(controller, vehicle()->id(), mockLink());
     controller.setBoundingBoxEnabled(true);
     mockLink()->clearReceivedMavCommandCounts();
     mockLink()->clearReceivedMavlinkMessageCounts();

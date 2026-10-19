@@ -25,6 +25,14 @@ in the THACO_Drone meta-repository through `cmake/THACOMAVLink.cmake` and
 
 The Fly View AI Vision panel controls Bounding Box, Tracking, and Following.
 Tracking and Following require Bounding Box. Changes send `CC_AI_VISION_CONTROL`
-immediately and every second while a vehicle is connected. Click or tap inside
-the displayed video to send one `MAV_CMD_CAMERA_TRACK_POINT` to Companion
-component 191, with coordinates normalized to the displayed video area.
+immediately and every second, on the link that carries the Companion heartbeat
+(component 191), the same link used for its parameters. This needs no FC or
+Vehicle, and never uses the FC's link or the first connected link; until a
+Companion heartbeat is seen the flags are only kept in the app. Click or tap
+inside the displayed video to send one `MAV_CMD_CAMERA_TRACK_POINT` to the
+Companion on that link, with coordinates normalized to the displayed video area.
+
+Bench check (MK15 with a UDP link to the Pi, e.g. `192.168.144.141:14550`): keep
+the FC disconnected and another UDP link open, toggle the three flags, and watch
+`/cc/ai_vision_control` on the Pi. Repeat with the FC connected; both cases must
+use the Companion link.

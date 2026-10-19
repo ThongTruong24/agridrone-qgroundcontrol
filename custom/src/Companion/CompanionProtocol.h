@@ -43,7 +43,4 @@ SharedLinkInterfacePtr resolveLink(Vehicle* vehicle);
 bool sendMessage(Vehicle* vehicle, const SharedLinkInterfacePtr& link, const mavlink_message_t& msg);
 bool sendCommand(Vehicle* vehicle, uint8_t targetSystem, MAV_CMD command, float param1, float param2 = 0.0f);
 
-bool sendAiVisionControl(Vehicle* vehicle, bool boundingBox, bool tracking, bool following);
-bool sendTrackPoint(Vehicle* vehicle, double x, double y, double radius);
-
 }  // namespace Companion
