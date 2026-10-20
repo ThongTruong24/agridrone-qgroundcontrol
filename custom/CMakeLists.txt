@@ -25,6 +25,7 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionToggleSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOperationLog.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionBandwidthPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml

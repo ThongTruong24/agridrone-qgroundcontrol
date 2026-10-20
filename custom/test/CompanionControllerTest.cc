@@ -2944,6 +2944,58 @@ QStringList comboTexts(QObject* combo)
 }
 }  // namespace
 
+namespace {
+void sendBandwidth(CompanionController& c, uint8_t system, uint8_t valid, float videoIn = 2480.f)
+{
+    mavlink_cc_bandwidth_t bw{};
+    bw.valid = valid;
+    bw.video_in_kbps = videoIn;
+    bw.video_out_kbps[0] = videoIn;
+    bw.video_readers = 1;
+    mavlink_message_t m{};
+    mavlink_msg_cc_bandwidth_encode(system, 191, &m, &bw);
+    c.processMessageForTest(m);
+}
+}  // namespace
+
+// 2026-10-20: per-hop bandwidth (spec 2026-10-20-stream-bandwidth-design.md): QGC could not tell WiFi, RF or a container apart.
+void CompanionControllerTest::_testBandwidthFromCompanion()
+{
+    CompanionController c;
+    c.setSendHookForTest([](const mavlink_message_t&) { return true; }); // the heartbeat starts a PARAM_EXT read
+    sendCompanionHeartbeat(c, 1);
+    sendBandwidth(c, 1, CC_BANDWIDTH_VALID_ROUTER | CC_BANDWIDTH_VALID_CAMERA | CC_BANDWIDTH_VALID_NETWORK);
+    const QVariantMap bw = c.bandwidth();
+    QCOMPARE(bw["ccState"].toString(), QStringLiteral("ok"));
+    QVERIFY(bw["cameraValid"].toBool());
+    QCOMPARE(bw["video"].toMap()["inKbps"].toDouble(), 2480.0);
+}
+
+void CompanionControllerTest::_testBandwidthPanel()
+{
+    QQmlEngine engine;
+    CompanionController* controller = nullptr;
+    auto root = loadCompanionPage(engine, controller);
+    QVERIFY(root && controller);
+    controller->setSendHookForTest([](const mavlink_message_t&) { return true; }); // the heartbeat starts a PARAM_EXT read
+    sendCompanionHeartbeat(*controller, 1);
+    sendBandwidth(*controller, 1, CC_BANDWIDTH_VALID_ROUTER | CC_BANDWIDTH_VALID_NETWORK); // edge-camera silent
+    emit controller->bandwidthChanged();
+    QTRY_VERIFY(findItem(root.get(), QStringLiteral("bandwidthCameraRow")));
+    QObject* row = findItem(root.get(), QStringLiteral("bandwidthCameraRow"));
+    QTRY_VERIFY(row->property("b").toString().contains(QStringLiteral("edge-camera")));
+
+    controller->_bandwidth.resetCc(); // a CC that never sends CC_BANDWIDTH
+    // A real 3 s session: the clock of a fresh controller is younger than 4 s, so a back-dated start would be negative (= no session).
+    QTest::qWait(1600);
+    sendCompanionHeartbeat(*controller, 1); // keeps the session (3.5 s heartbeat rule) without restarting it
+    QTest::qWait(1600);
+    emit controller->bandwidthChanged();
+    QObject* state = findItem(root.get(), QStringLiteral("bandwidthState"));
+    QVERIFY(state);
+    QTRY_VERIFY(state->property("text").toString().contains(QStringLiteral("does not support")));
+}
+
 // 2026-10-14: the Companion popup required a Vehicle (writeAllowed), so with the FC silent no link could be changed; its
 // ports, bauds and lock text now all come from the CC.
 void CompanionControllerTest::_testCompanionPopupWithoutVehicle()

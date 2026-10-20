@@ -118,6 +118,10 @@ CompanionController::CompanionController(QObject* parent) : QObject(parent)
         emit toolbarStateChanged();
     });
     freshnessTimer->start();
+    auto bandwidthTimer = new QTimer(this);
+    bandwidthTimer->setInterval(1000);
+    connect(bandwidthTimer, &QTimer::timeout, this, &CompanionController::_sampleBandwidth);
+    bandwidthTimer->start();
     // SOLID: Decoupled services
     _logService = new CompanionLogService(this);
     _configService = new CompanionConfigService(this);
@@ -210,6 +214,8 @@ bool CompanionController::vehicleConnected() const
 void CompanionController::_clearTelemetryState()
 {
     onCompanionLost(); // the watchdog and the heartbeat follow one rule
+    _bandwidth.resetCc();
+    _ccSessionStartMs = -1;
     _toolbarReceived.clear();
     _streamTelemetry.clear();
     _networkConfigVersion = 0;
@@ -634,6 +640,7 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
         _toolbarReceived["heartbeat"] = _toolbarClock.elapsed();
         if (sessionStart) {
             _ccLost = false;
+            _ccSessionStartMs = _toolbarClock.elapsed();
             ++_ccSessionEpoch;
             _paramService->resetState(); // "confirmed" means read in this session; the watchdog alone misses a heartbeat-only CC
             _paramService->setTransport(transport());
@@ -796,6 +803,14 @@ void CompanionController::_onMavlinkMessageReceived(const mavlink_message_t& mes
 
         emit visionChanged();
         emit toolbarStateChanged();
+        break;
+    }
+
+    case 42016: { // CC_BANDWIDTH
+        mavlink_cc_bandwidth_t bw;
+        mavlink_msg_cc_bandwidth_decode(&message, &bw);
+        _bandwidth.addCc(bw, _toolbarClock.elapsed());
+        emit bandwidthChanged();
         break;
     }
 
@@ -1021,6 +1036,33 @@ QVariantMap CompanionController::streamReason(const QString& stream) const
     if (_toolbarOperation && _toolbarOperation->origin != QLatin1String("stream"))
         return r(9, tr("Companion đang xử lý thao tác khác (%1)").arg(_toolbarOperation->group));
     return r(0, QString());
+}
+
+QVariantMap CompanionController::bandwidth() const
+{
+    const bool connected = companionState().value("connected").toBool();
+    QVariantMap m = _bandwidth.state(connected ? _ccSessionStartMs : -1, _toolbarClock.elapsed(),
+                                     _activeVehicle ? _activeVehicle->mavlinkLossPercent() : -1.f);
+    m["targetKbps"] = _bitrateKbps;
+    m["targetFps"] = _videoFps;
+    return m;
+}
+
+void CompanionController::_sampleBandwidth()
+{
+    QList<CompanionBandwidth::Link> links;
+    for (const SharedLinkInterfacePtr &link : LinkManager::instance()->links()) {
+        LinkInterface *raw = link.get();
+        if (!_linkRxBytes.contains(raw)) {
+            _linkRxBytes.insert(raw, 0);
+            // bytesReceived is emitted on the GUI thread (UDPLink.cc:626), so a plain counter is enough.
+            connect(raw, &LinkInterface::bytesReceived, this, [this](LinkInterface *l, const QByteArray &data) { _linkRxBytes[l] += data.size(); });
+            connect(raw, &QObject::destroyed, this, [this, raw]() { _linkRxBytes.remove(raw); });
+        }
+        links.append({link->linkConfiguration()->name(), CompanionBandwidth::endpointFor(link->linkConfiguration().get()), _linkRxBytes.value(raw)});
+    }
+    _bandwidth.sampleLocal(_toolbarClock.elapsed(), VideoManager::instance()->primaryReceivedBytes(), links);
+    emit bandwidthChanged();
 }
 
 QVariantMap CompanionController::companionState() const

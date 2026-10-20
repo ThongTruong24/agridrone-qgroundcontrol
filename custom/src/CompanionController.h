@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QHash>
 #include <QtCore/QMap>
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
@@ -14,6 +15,7 @@
 #include "LinkInterface.h"
 #include <optional>
 
+#include "CompanionBandwidth.h"
 #include "CompanionConfigService.h"
 #include "CompanionLinksService.h"
 #include "CompanionLogService.h"
@@ -34,6 +36,7 @@ class CompanionController : public QObject
     Q_PROPERTY(QVariantMap hotspotState READ hotspotState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantList serialLinks READ serialLinks NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap companionState READ companionState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap bandwidth READ bandwidth NOTIFY bandwidthChanged)
 
     QML_ELEMENT
     QML_SINGLETON
@@ -330,6 +333,7 @@ public:
 
     QVariantMap hotspotState() const;
     QVariantMap companionState() const;
+    QVariantMap bandwidth() const;
 
     QVariantList serialLinks() const { return _linksService->serialLinks(); }
 
@@ -435,6 +439,7 @@ signals:
     void mavlinkLogMessage(const QString& category, const QString& direction, const QString& message, int severity);
     void logEntriesChanged();
     void toolbarStateChanged();
+    void bandwidthChanged();
     void vehicleConnectedChanged();
     void cameraChanged();
     void visionChanged();
@@ -456,6 +461,10 @@ private:
     void _showToast(const QString& msg, bool isError);
     void _logMavlink(const QString& category, const QString& direction, const QString& message, int severity);
     void _clearTelemetryState();
+    void _sampleBandwidth();
+    CompanionBandwidth _bandwidth;
+    QHash<LinkInterface*, quint64> _linkRxBytes; // GUI thread only
+    qint64 _ccSessionStartMs = -1;               // _toolbarClock time of the heartbeat that opened this CC session
     CompanionTransport transport();
     void onCompanionLost();
     void onCompanionSessionStarted();

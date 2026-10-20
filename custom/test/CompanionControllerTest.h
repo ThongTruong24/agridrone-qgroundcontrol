@@ -74,6 +74,8 @@ private slots:
     void _testStreamPopupIsNotLockedByMissingValues();
     void _testCompanionPopupWithoutVehicle();
     void _testCompanionPopupSaveCancelAndRetry();
+    void _testBandwidthFromCompanion();
+    void _testBandwidthPanel();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect
