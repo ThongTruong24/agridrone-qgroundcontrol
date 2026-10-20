@@ -94,6 +94,8 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionMavlinkDispatcherTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionBandwidthTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionBandwidthTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.cc
@@ -122,6 +124,7 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
     add_qgc_test(CompanionVehicleLifecycleTest LABELS Integration Vehicle)
     add_qgc_test(CompanionMavlinkDispatcherTest LABELS Unit)
     add_qgc_test(CompanionLinksServiceTest LABELS Unit)
+    add_qgc_test(CompanionBandwidthTest LABELS Unit)
     add_qgc_test(CompanionLogServiceTest LABELS Unit)
     add_qgc_test(CompanionParamServiceTest LABELS Unit)
     add_qgc_test(CompanionProtocolTest LABELS Unit)
@@ -147,6 +150,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionBandwidth.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionBandwidth.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.cc
