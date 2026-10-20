@@ -47,9 +47,9 @@ void CompanionBandwidth::sampleLocal(qint64 nowMs, qint64 videoBytes, const QLis
             push(_videoKbps, videoBytes < _lastVideoBytes ? 0.0 : double(videoBytes - _lastVideoBytes) * 8.0 / double(dt));
         }
         for (const Link &link : links) {
-            if (_lastLinkBytes.contains(link.name)) {
-                const quint64 last = _lastLinkBytes.value(link.name);
-                push(_linkRates[link.name], link.bytes < last ? 0.0 : double(link.bytes - last) * 1000.0 / double(dt));
+            if (_lastLinkBytes.contains(link.id)) {
+                const quint64 last = _lastLinkBytes.value(link.id);
+                push(_linkRates[link.id], link.bytes < last ? 0.0 : double(link.bytes - last) * 1000.0 / double(dt));
             }
         }
     }
@@ -57,7 +57,7 @@ void CompanionBandwidth::sampleLocal(qint64 nowMs, qint64 videoBytes, const QLis
     _lastVideoBytes = videoBytes;
     _lastLocalMs = nowMs;
     _lastLinkBytes.clear();
-    for (const Link &link : links) _lastLinkBytes.insert(link.name, link.bytes);
+    for (const Link &link : links) _lastLinkBytes.insert(link.id, link.bytes);
     for (auto it = _linkRates.begin(); it != _linkRates.end();) { // a link that left must not return with its old rate
         it = _lastLinkBytes.contains(it.key()) ? std::next(it) : _linkRates.erase(it);
     }
@@ -107,7 +107,7 @@ QVariantMap CompanionBandwidth::state(qint64 sessionStartMs, qint64 nowMs, float
         for (const Link &link : _links) {
             if (link.endpoint == i) {
                 row["qgcLink"] = link.name;
-                if (_linkRates.contains(link.name)) row["qgcRx"] = mean(_linkRates.value(link.name));
+                if (_linkRates.contains(link.id)) row["qgcRx"] = mean(_linkRates.value(link.id));
                 break;
             }
         }
@@ -118,7 +118,7 @@ QVariantMap CompanionBandwidth::state(qint64 sessionStartMs, qint64 nowMs, float
     for (const Link &link : _links) {
         if (link.endpoint >= 0) continue;
         QVariantMap other{{"name", link.name}};
-        if (_linkRates.contains(link.name)) other["qgcRx"] = mean(_linkRates.value(link.name));
+        if (_linkRates.contains(link.id)) other["qgcRx"] = mean(_linkRates.value(link.id));
         others.append(other);
     }
     m["otherLinks"] = others;

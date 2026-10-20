@@ -14,6 +14,7 @@ private slots:
     void _testEndpointForUdpConfig();
     void _testReconnectedLinkHasNoStaleRate();
     void _testLinkWithoutRateOmitsQgcRx();
+    void _testSameNameLinksKeepOwnRates();
     void _testValidFlagsNeedCcSession();
     void _testGapClearsWindow();
     void _testDuplicateDeliveryIgnored();

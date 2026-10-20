@@ -23,6 +23,7 @@ public:
         QString name;
         int endpoint = -1; ///< router udp index 0 (14550), 1 (14551), 2 (QGC_Direct), -1 unpaired
         quint64 bytes = 0; ///< cumulative bytes received on this link
+        quintptr id = 0;   ///< stable link identity (the LinkInterface pointer): QGC allows duplicate names, so rates key on this
     };
 
     static int endpointFor(const LinkConfiguration *config);
@@ -42,7 +43,7 @@ private:
     qint64 _lastLocalMs = -1;
     qint64 _lastVideoBytes = -1;
     std::deque<double> _videoKbps;
-    QHash<QString, quint64> _lastLinkBytes;
-    QHash<QString, std::deque<double>> _linkRates;
+    QHash<quintptr, quint64> _lastLinkBytes;
+    QHash<quintptr, std::deque<double>> _linkRates;
     QList<Link> _links;
 };

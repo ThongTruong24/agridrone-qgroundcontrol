@@ -63,8 +63,8 @@ void CompanionBandwidthTest::_testStates()
 void CompanionBandwidthTest::_testLocalRatesAndPairing()
 {
     CompanionBandwidth bw;
-    bw.sampleLocal(0, 0, {{QStringLiteral("UDP Link"), 0, 0}, {QStringLiteral("TCP"), -1, 0}});
-    bw.sampleLocal(1000, 125000, {{QStringLiteral("UDP Link"), 0, 12000}, {QStringLiteral("TCP"), -1, 500}});
+    bw.sampleLocal(0, 0, {{QStringLiteral("UDP Link"), 0, 0, 1}, {QStringLiteral("TCP"), -1, 0, 2}});
+    bw.sampleLocal(1000, 125000, {{QStringLiteral("UDP Link"), 0, 12000, 1}, {QStringLiteral("TCP"), -1, 500, 2}});
     bw.addCc(sample(1000.f), 1000);
     const QVariantMap s = bw.state(0, 1000, -1.f);
     QCOMPARE(s["video"].toMap()["qgcRxKbps"].toDouble(), 1000.0);
@@ -117,7 +117,7 @@ void CompanionBandwidthTest::_testReconnectedLinkHasNoStaleRate()
 void CompanionBandwidthTest::_testLinkWithoutRateOmitsQgcRx()
 {
     CompanionBandwidth bw;
-    bw.sampleLocal(0, -1, {L{QStringLiteral("A"), 0, 5}, L{QStringLiteral("T"), -1, 5}});
+    bw.sampleLocal(0, -1, {L{QStringLiteral("A"), 0, 5, 1}, L{QStringLiteral("T"), -1, 5, 2}});
     const QVariantMap s = bw.state(0, 0, -1.f);
     const QVariantMap row0 = s["telemetry"].toList()[0].toMap();
     QCOMPARE(row0["qgcLink"].toString(), QStringLiteral("A"));
@@ -125,6 +125,18 @@ void CompanionBandwidthTest::_testLinkWithoutRateOmitsQgcRx()
     const QVariantMap other = s["otherLinks"].toList()[0].toMap();
     QCOMPARE(other["name"].toString(), QStringLiteral("T"));
     QVERIFY(!other.contains("qgcRx"));
+}
+
+// 2026-10-21: QGC allows duplicate link names; both rows showed one link's rate because rates were keyed by name.
+void CompanionBandwidthTest::_testSameNameLinksKeepOwnRates()
+{
+    CompanionBandwidth bw;
+    bw.sampleLocal(0, -1, {L{QStringLiteral("UDP"), 0, 0, 1}, L{QStringLiteral("UDP"), -1, 0, 2}});
+    bw.sampleLocal(1000, -1, {L{QStringLiteral("UDP"), 0, 10000, 1}, L{QStringLiteral("UDP"), -1, 3000, 2}});
+    const QVariantMap s = bw.state(0, 1000, -1.f);
+    QCOMPARE(s["telemetry"].toList()[0].toMap()["qgcRx"].toDouble(), 10000.0);
+    QCOMPARE(s["otherLinks"].toList().size(), 1);
+    QCOMPARE(s["otherLinks"].toList()[0].toMap()["qgcRx"].toDouble(), 3000.0);
 }
 
 // 2026-10-20: with no CC heartbeat session, a fresh sample still reported the owner flags valid.

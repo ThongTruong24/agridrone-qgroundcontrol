@@ -1065,7 +1065,7 @@ void CompanionController::_sampleBandwidth()
             connect(raw, &LinkInterface::bytesReceived, this, [this](LinkInterface *l, const QByteArray &data) { _addLinkRxBytes(l, data.size()); });
             connect(raw, &QObject::destroyed, this, [this, raw]() { _linkRxBytes.remove(raw); });
         }
-        links.append({link->linkConfiguration()->name(), CompanionBandwidth::endpointFor(link->linkConfiguration().get()), _linkRxBytes.value(raw)});
+        links.append({link->linkConfiguration()->name(), CompanionBandwidth::endpointFor(link->linkConfiguration().get()), _linkRxBytes.value(raw), quintptr(raw)});
     }
     _bandwidth.sampleLocal(_toolbarClock.elapsed(), VideoManager::instance()->primaryReceivedBytes(), links);
     emit bandwidthChanged();
