@@ -76,6 +76,8 @@ private slots:
     void _testCompanionPopupSaveCancelAndRetry();
     void _testBandwidthFromCompanion();
     void _testBandwidthPanel();
+    void _testBandwidthQgcSideWithoutCcSupport();
+    void _testBandwidthLateBytesIgnoreDeadLink();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect

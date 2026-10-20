@@ -12,6 +12,8 @@ ColumnLayout {
     // A NaN/Inf from a faulty CC shows as "—", never "NaN kbps".
     function bytes(v) { return typeof v !== "number" || !isFinite(v) ? "—" : v >= 1000 ? qsTr("%1 KB/s").arg((v / 1000).toFixed(1)) : qsTr("%1 B/s").arg(Math.round(v)) }
     function kbps(v) { return typeof v !== "number" || !isFinite(v) ? "—" : qsTr("%1 kbps").arg(Math.round(v)) }
+    // Fixed-size Repeater models read their row through this, so a missing row shows "—" and delegates are not rebuilt every second.
+    function at(list, i) { return list && list[i] ? list[i] : ({}) }
     function noData(owner) { return qsTr("no data (%1 not reporting)").arg(owner) }
 
     component Row3: RowLayout {
@@ -38,12 +40,14 @@ ColumnLayout {
         Layout.fillWidth: true
         Row3 { a: qsTr("Telemetry"); b: qsTr("CC sends"); c: qsTr("QGC receives") }
         Repeater {
-            model: panel.bw.telemetry || []
+            model: 3
             delegate: Row3 {
-                required property var modelData
-                a: modelData.endpoint
-                b: panel.bw.routerValid ? panel.bytes(modelData.ccTx) : panel.noData("edge-router")
-                c: modelData.qgcLink ? qsTr("%1 (%2)").arg(panel.bytes(modelData.qgcRx)).arg(modelData.qgcLink) : qsTr("other client")
+                required property int index
+                readonly property var d: panel.at(panel.bw.telemetry, index)
+                objectName: "bandwidthTelemetryRow" + index
+                a: d.endpoint || "—"
+                b: panel.bw.routerValid ? panel.bytes(d.ccTx) : panel.noData("edge-router")
+                c: d.qgcLink ? qsTr("%1 (%2)").arg(panel.bytes(d.qgcRx)).arg(d.qgcLink) : qsTr("other client")
             }
         }
         QGCLabel { text: qsTr("Loss %1 % (all links)").arg(panel.bw.loss >= 0 ? panel.bw.loss.toFixed(1) : "—") }
@@ -58,24 +62,51 @@ ColumnLayout {
             delegate: Row3 {
                 required property string modelData
                 required property int index
+                objectName: "bandwidthOutRow" + index
                 a: modelData
-                b: panel.bw.cameraValid ? panel.kbps(panel.bw.video.out[index]) : panel.noData("edge-camera")
+                b: panel.bw.cameraValid ? panel.kbps(panel.at(panel.bw.video.out, index)) : panel.noData("edge-camera")
                 c: index === 3 && panel.bw.cameraValid ? qsTr("readers %1").arg(panel.bw.video.readers) : ""
             }
         }
-        Row3 {
-            a: qsTr("This QGC receives")
-            b: panel.kbps(panel.bw.video ? panel.bw.video.qgcRxKbps : undefined)
-            c: qsTr("normally 1–3 % below CC (RTP overhead)")
-        }
         Repeater {
-            model: panel.bw.interfaces || []
+            model: 3
             delegate: Row3 {
-                required property var modelData
-                a: modelData.name + qsTr(" tx/rx")
-                b: panel.bw.networkValid ? qsTr("%1 / %2").arg(panel.kbps(modelData.txKbps)).arg(panel.kbps(modelData.rxKbps)) : panel.noData("edge-network")
+                required property int index
+                readonly property var d: panel.at(panel.bw.interfaces, index)
+                a: (d.name || "—") + qsTr(" tx/rx")
+                b: panel.bw.networkValid ? qsTr("%1 / %2").arg(panel.kbps(d.txKbps)).arg(panel.kbps(d.rxKbps)) : panel.noData("edge-network")
                 c: ""
             }
+        }
+    }
+
+    // What this QGC receives: valid with or without a CC, so it sits outside the CC-gated table.
+    QGCLabel { text: qsTr("This QGC"); font.bold: true }
+    Row3 {
+        objectName: "bandwidthQgcVideoRow"
+        a: qsTr("This QGC receives")
+        b: panel.kbps(panel.bw.video ? panel.bw.video.qgcRxKbps : undefined)
+        c: panel.bw.ccState === "ok" ? qsTr("normally 1–3 % below CC (RTP overhead)") : ""
+    }
+    Repeater {
+        model: 3
+        delegate: Row3 {
+            required property int index
+            readonly property var d: panel.at(panel.bw.telemetry, index)
+            visible: !!d.qgcLink
+            a: d.qgcLink || ""
+            b: panel.bytes(d.qgcRx)
+            c: d.endpoint || ""
+        }
+    }
+    Repeater {
+        model: panel.bw.otherLinks ? panel.bw.otherLinks.length : 0
+        delegate: Row3 {
+            required property int index
+            readonly property var d: panel.at(panel.bw.otherLinks, index)
+            a: d.name || "—"
+            b: panel.bytes(d.qgcRx)
+            c: ""
         }
     }
 }

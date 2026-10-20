@@ -462,6 +462,7 @@ private:
     void _logMavlink(const QString& category, const QString& direction, const QString& message, int severity);
     void _clearTelemetryState();
     void _sampleBandwidth();
+    void _addLinkRxBytes(LinkInterface *link, qsizetype size);
     CompanionBandwidth _bandwidth;
     QHash<LinkInterface*, quint64> _linkRxBytes; // GUI thread only
     qint64 _ccSessionStartMs = -1;               // _toolbarClock time of the heartbeat that opened this CC session

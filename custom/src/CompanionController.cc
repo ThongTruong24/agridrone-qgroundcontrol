@@ -1048,6 +1048,12 @@ QVariantMap CompanionController::bandwidth() const
     return m;
 }
 
+void CompanionController::_addLinkRxBytes(LinkInterface *link, qsizetype size)
+{
+    // Update only a live entry: a queued delivery after `destroyed` must not bring a dead pointer back.
+    if (auto it = _linkRxBytes.find(link); it != _linkRxBytes.end()) it.value() += size;
+}
+
 void CompanionController::_sampleBandwidth()
 {
     QList<CompanionBandwidth::Link> links;
@@ -1055,8 +1061,8 @@ void CompanionController::_sampleBandwidth()
         LinkInterface *raw = link.get();
         if (!_linkRxBytes.contains(raw)) {
             _linkRxBytes.insert(raw, 0);
-            // bytesReceived is emitted on the GUI thread (UDPLink.cc:626), so a plain counter is enough.
-            connect(raw, &LinkInterface::bytesReceived, this, [this](LinkInterface *l, const QByteArray &data) { _linkRxBytes[l] += data.size(); });
+            // A plain counter is enough: the `this` context object queues delivery to the GUI thread (MockLink emits from its worker).
+            connect(raw, &LinkInterface::bytesReceived, this, [this](LinkInterface *l, const QByteArray &data) { _addLinkRxBytes(l, data.size()); });
             connect(raw, &QObject::destroyed, this, [this, raw]() { _linkRxBytes.remove(raw); });
         }
         links.append({link->linkConfiguration()->name(), CompanionBandwidth::endpointFor(link->linkConfiguration().get()), _linkRxBytes.value(raw)});

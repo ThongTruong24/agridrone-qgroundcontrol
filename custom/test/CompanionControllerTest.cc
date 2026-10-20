@@ -2971,6 +2971,7 @@ void CompanionControllerTest::_testBandwidthFromCompanion()
     QCOMPARE(bw["video"].toMap()["inKbps"].toDouble(), 2480.0);
 }
 
+// 2026-10-20: the panel test only matched the "no data" fallback text, so a CC_BANDWIDTH that never reached the model still passed.
 void CompanionControllerTest::_testBandwidthPanel()
 {
     QQmlEngine engine;
@@ -2980,12 +2981,38 @@ void CompanionControllerTest::_testBandwidthPanel()
     controller->setSendHookForTest([](const mavlink_message_t&) { return true; }); // the heartbeat starts a PARAM_EXT read
     sendCompanionHeartbeat(*controller, 1);
     sendBandwidth(*controller, 1, CC_BANDWIDTH_VALID_ROUTER | CC_BANDWIDTH_VALID_NETWORK); // edge-camera silent
-    emit controller->bandwidthChanged();
+    QCOMPARE(controller->bandwidth()["ccState"].toString(), QStringLiteral("ok"));
     QTRY_VERIFY(findItem(root.get(), QStringLiteral("bandwidthCameraRow")));
+    QObject* state = findItem(root.get(), QStringLiteral("bandwidthState"));
+    QVERIFY(state);
+    QTRY_VERIFY(!state->property("visible").toBool());
+    // Router bit set: a rendered number, not the fallback.
+    QObject* telemetry = findItem(root.get(), QStringLiteral("bandwidthTelemetryRow0"));
+    QVERIFY(telemetry);
+    QTRY_VERIFY(!telemetry->property("b").toString().isEmpty());
+    QVERIFY(!telemetry->property("b").toString().contains(QStringLiteral("no data")));
+    // Camera bit cleared: the camera rows say who is silent.
     QObject* row = findItem(root.get(), QStringLiteral("bandwidthCameraRow"));
     QTRY_VERIFY(row->property("b").toString().contains(QStringLiteral("edge-camera")));
 
-    controller->_bandwidth.resetCc(); // a CC that never sends CC_BANDWIDTH
+    // Camera bit set: the numbers from CC_BANDWIDTH. A sample < 500 ms after the last is dropped as a duplicate.
+    QTest::qWait(600);
+    sendBandwidth(*controller, 1, CC_BANDWIDTH_VALID_ROUTER | CC_BANDWIDTH_VALID_CAMERA | CC_BANDWIDTH_VALID_NETWORK, 2480.f);
+    QTRY_VERIFY(row->property("b").toString().contains(QStringLiteral("2480 kbps")));
+    QObject* out0 = findItem(root.get(), QStringLiteral("bandwidthOutRow0"));
+    QVERIFY(out0);
+    QTRY_VERIFY(out0->property("b").toString().contains(QStringLiteral("2480 kbps")));
+}
+
+// 2026-10-20: an old CC (no CC_BANDWIDTH) hid the whole table, including the valid "This QGC receives" video row.
+void CompanionControllerTest::_testBandwidthQgcSideWithoutCcSupport()
+{
+    QQmlEngine engine;
+    CompanionController* controller = nullptr;
+    auto root = loadCompanionPage(engine, controller);
+    QVERIFY(root && controller);
+    controller->setSendHookForTest([](const mavlink_message_t&) { return true; });
+    sendCompanionHeartbeat(*controller, 1);
     // A real 3 s session: the clock of a fresh controller is younger than 4 s, so a back-dated start would be negative (= no session).
     QTest::qWait(1600);
     sendCompanionHeartbeat(*controller, 1); // keeps the session (3.5 s heartbeat rule) without restarting it
@@ -2994,6 +3021,17 @@ void CompanionControllerTest::_testBandwidthPanel()
     QObject* state = findItem(root.get(), QStringLiteral("bandwidthState"));
     QVERIFY(state);
     QTRY_VERIFY(state->property("text").toString().contains(QStringLiteral("does not support")));
+    QObject* qgcVideo = findItem(root.get(), QStringLiteral("bandwidthQgcVideoRow"));
+    QVERIFY(qgcVideo);
+    QVERIFY(qgcVideo->property("visible").toBool());
+}
+
+// 2026-10-20: a queued bytesReceived after `destroyed` re-inserted the dead link, so a new link at that address was never counted.
+void CompanionControllerTest::_testBandwidthLateBytesIgnoreDeadLink()
+{
+    CompanionController c;
+    c._addLinkRxBytes(reinterpret_cast<LinkInterface*>(quintptr(0x1000)), 10);
+    QVERIFY(c._linkRxBytes.isEmpty());
 }
 
 // 2026-10-14: the Companion popup required a Vehicle (writeAllowed), so with the FC silent no link could be changed; its
