@@ -82,6 +82,8 @@ public:
     QStringList saveModifiedParameters();
     /// Parameters the CC has not yet reported; read one by one after a LIST because the CC omits what it cannot read.
     void readMissing();
+    /// Background reads (the READ burst after a LIST) wait while this returns true: a SET's ACK and keepalives come first.
+    void setBackgroundHold(std::function<bool()> hold) { _backgroundHold = std::move(hold); }
     int syncedCount() const;
     bool isModified(const QString& name) const { return _isModified.value(name, false); }
     QStringList allFactNames() const { return _order; }
@@ -96,7 +98,11 @@ public:
 
     Fact* parameterFact(const QString& name) const { return _facts.value(name, nullptr); }
     bool isSecret(const QString& name) const { return _meta.value(name).isSecret; }
+    /// The one place that decides what a log line may show of a value: a secret is never written.
+    QString loggable(const QString& name, const QVariant& value) const { return _meta.value(name).isSecret ? QStringLiteral("<hidden>") : value.toString(); }
     bool isReadOnly(const QString& name) const { return _meta.value(name).readOnly; }
+    /// Catalog group of a parameter ("Camera", "Vision", "Telemetry", "Network"); a link the CC reports beyond the catalog copies link 0's.
+    QString groupOf(const QString& name) const { return _meta.value(name).group; }
     QStringList options(const QString& name) const { return _meta.value(name).options; }
     QVariant confirmedValue(const QString& name) const { return _isLiveSynced.value(name) ? _liveValues.value(name) : QVariant(); }
     /// confirmedValue() is invalid again until the CC reports the parameter anew.
@@ -143,4 +149,5 @@ private:
     QMap<QString, bool> _isModified;
     QMap<QString, bool> _isPending;
     CompanionTransport _transport;
+    std::function<bool()> _backgroundHold;
 };

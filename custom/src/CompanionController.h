@@ -336,7 +336,8 @@ public:
     /// The single stream mode, CC_STREAM_MODE: 0 Off, 1 Video, 2 Vision. A new mode while a mode operation is pending
     /// replaces it (the CC cancels the old one). Camera/Vision writes are allowed while armed.
     Q_INVOKABLE bool setStreamMode(int mode);
-    /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way.
+    /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way. Sends nothing when the
+    /// previous mode is unknown.
     Q_INVOKABLE void cancelStreamOperation();
     /// {mode (confirmed, -1 unknown), pendingMode, modeOperation, pending, operation, reason, visionFresh,
     ///  blocked (why a mode SET would be refused now; empty = allowed)}
@@ -491,6 +492,7 @@ private:
                                      QStringList* rideAlong = nullptr) const;
     bool modeOperationPending() const;
     QString modeBlockedReason() const;
+    bool parameterAllowed(const QString& group, const QString& id) const;
     bool refuseStream(const QString& why);
     void syncPlayerToMode();
     int _playerMode{-1};             // the confirmed mode QGC's player was last (re)started for; -1 none yet
@@ -539,6 +541,7 @@ private:
         bool readbackRequested{false};
     };
 
+    void logOperationSummary(const ToolbarOperation& op, const QString& result); ///< one log line per operation: `ok`, `error: ..`, `unconfirmed`, `replaced`
     std::optional<ToolbarOperation> _toolbarOperation;
     QTimer* _toolbarOperationTimer{nullptr};
     QTimer* _setAckTimer{nullptr};
