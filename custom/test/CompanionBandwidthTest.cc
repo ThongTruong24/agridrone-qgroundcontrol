@@ -85,6 +85,10 @@ void CompanionBandwidthTest::_testEndpointForUdpConfig()
     UDPConfiguration second(QStringLiteral("second"));
     second.addHost(QStringLiteral("127.0.0.1"), 14551);
     QCOMPARE(CompanionBandwidth::endpointFor(&second), 1);
+    // 2026-10-20: endpoint 0 (target host 14550) was never asserted.
+    UDPConfiguration first(QStringLiteral("first"));
+    first.addHost(QStringLiteral("127.0.0.1"), 14550);
+    QCOMPARE(CompanionBandwidth::endpointFor(&first), 0);
     UDPConfiguration listener(QStringLiteral("listener"));
     listener.setLocalPort(14550);
     QCOMPARE(CompanionBandwidth::endpointFor(&listener), 2);
@@ -92,4 +96,104 @@ void CompanionBandwidthTest::_testEndpointForUdpConfig()
     other.setLocalPort(14560);
     QCOMPARE(CompanionBandwidth::endpointFor(&other), -1);
     QCOMPARE(CompanionBandwidth::endpointFor(nullptr), -1);
+}
+
+using L = CompanionBandwidth::Link;
+
+// 2026-10-20: a link that vanished and came back under the same name showed its pre-disconnect rate as live.
+void CompanionBandwidthTest::_testReconnectedLinkHasNoStaleRate()
+{
+    CompanionBandwidth bw;
+    bw.sampleLocal(0, -1, {L{QStringLiteral("A"), 0, 0}});
+    bw.sampleLocal(1000, -1, {L{QStringLiteral("A"), 0, 10000}});
+    bw.sampleLocal(2000, -1, {L{QStringLiteral("A"), 0, 20000}});
+    QCOMPARE(bw.state(0, 2000, -1.f)["telemetry"].toList()[0].toMap()["qgcRx"].toDouble(), 10000.0);
+    bw.sampleLocal(3000, -1, {});
+    bw.sampleLocal(4000, -1, {L{QStringLiteral("A"), 0, 0}});
+    QVERIFY(!bw.state(0, 4000, -1.f)["telemetry"].toList()[0].toMap().contains("qgcRx"));
+}
+
+// 2026-10-20: a link with no rate sample yet showed 0 instead of "no data".
+void CompanionBandwidthTest::_testLinkWithoutRateOmitsQgcRx()
+{
+    CompanionBandwidth bw;
+    bw.sampleLocal(0, -1, {L{QStringLiteral("A"), 0, 5}, L{QStringLiteral("T"), -1, 5}});
+    const QVariantMap s = bw.state(0, 0, -1.f);
+    const QVariantMap row0 = s["telemetry"].toList()[0].toMap();
+    QCOMPARE(row0["qgcLink"].toString(), QStringLiteral("A"));
+    QVERIFY(!row0.contains("qgcRx"));
+    const QVariantMap other = s["otherLinks"].toList()[0].toMap();
+    QCOMPARE(other["name"].toString(), QStringLiteral("T"));
+    QVERIFY(!other.contains("qgcRx"));
+}
+
+// 2026-10-20: with no CC heartbeat session, a fresh sample still reported the owner flags valid.
+void CompanionBandwidthTest::_testValidFlagsNeedCcSession()
+{
+    CompanionBandwidth bw;
+    bw.addCc(sample(1000.f), 1000);
+    const QVariantMap s = bw.state(-1, 1500, -1.f);
+    QCOMPARE(s["ccState"].toString(), QStringLiteral("noCc"));
+    QVERIFY(!s["routerValid"].toBool());
+    QVERIFY(!s["cameraValid"].toBool());
+    QVERIFY(!s["networkValid"].toBool());
+}
+
+// 2026-10-20: after a CC_BANDWIDTH dropout the first samples averaged with pre-gap data.
+void CompanionBandwidthTest::_testGapClearsWindow()
+{
+    CompanionBandwidth bw;
+    bw.addCc(sample(9000.f), 0);
+    bw.addCc(sample(9000.f), 1000);
+    bw.addCc(sample(1000.f), 5000);
+    QCOMPARE(bw.state(0, 5000, -1.f)["video"].toMap()["inKbps"].toDouble(), 1000.0);
+    bw.addCc(sample(3000.f), 6000);
+    QCOMPARE(bw.state(0, 6000, -1.f)["video"].toMap()["inKbps"].toDouble(), 2000.0);
+}
+
+// 2026-10-20: one CC reached over two links delivers every 1 Hz CC_BANDWIDTH twice; the window double-counted.
+void CompanionBandwidthTest::_testDuplicateDeliveryIgnored()
+{
+    CompanionBandwidth bw;
+    bw.addCc(sample(1000.f), 0);
+    bw.addCc(sample(1000.f), 20);
+    bw.addCc(sample(4000.f), 1000);
+    bw.addCc(sample(4000.f), 1030);
+    QCOMPARE(bw.state(0, 1030, -1.f)["video"].toMap()["inKbps"].toDouble(), 2500.0);
+}
+
+// 2026-10-20: counter reset (reconnect, restart) must read 0 for that tick and rebaseline, never negative.
+void CompanionBandwidthTest::_testCounterDecreaseIsZeroAndRebaselines()
+{
+    CompanionBandwidth bw;
+    bw.sampleLocal(0, 0, {L{QStringLiteral("A"), 0, 0}});
+    bw.sampleLocal(1000, 125000, {L{QStringLiteral("A"), 0, 3000}});
+    bw.sampleLocal(2000, 1000, {L{QStringLiteral("A"), 0, 100}});
+    bw.sampleLocal(3000, 126000, {L{QStringLiteral("A"), 0, 3100}});
+    const QVariantMap s = bw.state(0, 3000, -1.f);
+    QCOMPARE(s["video"].toMap()["qgcRxKbps"].toDouble(), (1000.0 + 0.0 + 1000.0) / 3.0);
+    QCOMPARE(s["telemetry"].toList()[0].toMap()["qgcRx"].toDouble(), (3000.0 + 0.0 + 3000.0) / 3.0);
+}
+
+// 2026-10-20: a sample whose owner bit is cleared must not drag that owner's mean toward its zero payload.
+void CompanionBandwidthTest::_testMeanSkipsClearedOwnerBit()
+{
+    CompanionBandwidth bw;
+    bw.addCc(sample(1000.f), 0);
+    bw.addCc(sample(9999.f, CC_BANDWIDTH_VALID_ROUTER | CC_BANDWIDTH_VALID_NETWORK), 1000);
+    bw.addCc(sample(3000.f), 2000);
+    QCOMPARE(bw.state(0, 2000, -1.f)["video"].toMap()["inKbps"].toDouble(), 2000.0);
+}
+
+// 2026-10-20: the QGC-side window of 3 was never exercised past its first fill.
+void CompanionBandwidthTest::_testQgcWindowSlides()
+{
+    CompanionBandwidth bw;
+    const quint64 bytes[] = {0, 125000, 375000, 750000, 1250000}; // 1000, 2000, 3000, 4000 kbps
+    for (int i = 0; i < 5; ++i) {
+        bw.sampleLocal(i * 1000, qint64(bytes[i]), {L{QStringLiteral("A"), 0, bytes[i]}});
+    }
+    const QVariantMap s = bw.state(0, 4000, -1.f);
+    QCOMPARE(s["video"].toMap()["qgcRxKbps"].toDouble(), 3000.0);
+    QCOMPARE(s["telemetry"].toList()[0].toMap()["qgcRx"].toDouble(), 3000.0 * 125.0);
 }

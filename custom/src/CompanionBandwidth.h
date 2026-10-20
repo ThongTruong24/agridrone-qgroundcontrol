@@ -17,6 +17,7 @@ class CompanionBandwidth
 public:
     static constexpr int kWindow = 3;
     static constexpr qint64 kSilenceMs = 3000;
+    static constexpr qint64 kDuplicateMs = 500;
 
     struct Link {
         QString name;

@@ -26,6 +26,8 @@ int CompanionBandwidth::endpointFor(const LinkConfiguration *config)
 
 void CompanionBandwidth::addCc(const mavlink_cc_bandwidth_t &sample, qint64 nowMs)
 {
+    if (_lastCcMs >= 0 && nowMs - _lastCcMs < kDuplicateMs) return; // 1 Hz sender; duplicates arrive over a second link
+    if (_lastCcMs >= 0 && nowMs - _lastCcMs > kSilenceMs) _cc.clear(); // pre-gap samples must not average with recovered ones
     _cc.push_back(sample);
     while (_cc.size() > size_t(kWindow)) _cc.pop_front();
     _lastCcMs = nowMs;
@@ -56,6 +58,9 @@ void CompanionBandwidth::sampleLocal(qint64 nowMs, qint64 videoBytes, const QLis
     _lastLocalMs = nowMs;
     _lastLinkBytes.clear();
     for (const Link &link : links) _lastLinkBytes.insert(link.name, link.bytes);
+    for (auto it = _linkRates.begin(); it != _linkRates.end();) { // a link that left must not return with its old rate
+        it = _lastLinkBytes.contains(it.key()) ? std::next(it) : _linkRates.erase(it);
+    }
     _links = links;
 }
 
@@ -87,9 +92,10 @@ QVariantMap CompanionBandwidth::state(qint64 sessionStartMs, qint64 nowMs, float
     else m["ccState"] = QStringLiteral("waiting");
 
     const uint8_t latest = _cc.empty() ? 0 : _cc.back().valid;
-    m["routerValid"] = fresh && (latest & CC_BANDWIDTH_VALID_ROUTER);
-    m["cameraValid"] = fresh && (latest & CC_BANDWIDTH_VALID_CAMERA);
-    m["networkValid"] = fresh && (latest & CC_BANDWIDTH_VALID_NETWORK);
+    const bool ok = m["ccState"] == QStringLiteral("ok");
+    m["routerValid"] = ok && (latest & CC_BANDWIDTH_VALID_ROUTER);
+    m["cameraValid"] = ok && (latest & CC_BANDWIDTH_VALID_CAMERA);
+    m["networkValid"] = ok && (latest & CC_BANDWIDTH_VALID_NETWORK);
     m["loss"] = lossPercent;
 
     static const QStringList kEndpoints = {QStringLiteral("UDP 14550"), QStringLiteral("UDP 14551"), QStringLiteral("QGC_Direct")};
@@ -101,7 +107,7 @@ QVariantMap CompanionBandwidth::state(qint64 sessionStartMs, qint64 nowMs, float
         for (const Link &link : _links) {
             if (link.endpoint == i) {
                 row["qgcLink"] = link.name;
-                row["qgcRx"] = mean(_linkRates.value(link.name));
+                if (_linkRates.contains(link.name)) row["qgcRx"] = mean(_linkRates.value(link.name));
                 break;
             }
         }
@@ -110,7 +116,10 @@ QVariantMap CompanionBandwidth::state(qint64 sessionStartMs, qint64 nowMs, float
     m["telemetry"] = telemetry;
     QVariantList others;
     for (const Link &link : _links) {
-        if (link.endpoint < 0) others.append(QVariantMap{{"name", link.name}, {"qgcRx", mean(_linkRates.value(link.name))}});
+        if (link.endpoint >= 0) continue;
+        QVariantMap other{{"name", link.name}};
+        if (_linkRates.contains(link.name)) other["qgcRx"] = mean(_linkRates.value(link.name));
+        others.append(other);
     }
     m["otherLinks"] = others;
 
