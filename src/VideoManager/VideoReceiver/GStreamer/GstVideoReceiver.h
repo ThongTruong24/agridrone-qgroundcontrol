@@ -59,6 +59,7 @@ public:
     ~GstVideoReceiver();
 
     QString decoderName()     const { QMutexLocker locker(&_decoderNameMutex); return _decoderName; }
+    qint64 receivedBytes() const override { return static_cast<qint64>(_receivedBytes.load(std::memory_order_relaxed)); }
     quint64 processedFrames() const { return _processedFrames.load(std::memory_order_relaxed); }
     quint64 droppedFrames()   const { return _droppedFrames.load(std::memory_order_relaxed); }
     qint64  currentJitterNs() const { return _currentJitterNs.load(std::memory_order_relaxed); }
@@ -140,6 +141,7 @@ private:
     std::atomic<quint64> _reconnectEpoch = 0;    ///< Bumped on every stop() — pending singleShot lambdas check this before firing, replacing an explicit cancel/pending-flag pair.
     std::atomic<quint64> _sourceFrameCount =
         0;  ///< Tee-probe frame tally (streaming thread); drives the source-side flow heartbeat log.
+    std::atomic<quint64> _receivedBytes{0};  ///< Tee-probe byte tally (streaming thread), read by the bandwidth panel.
     gulong _teeProbeId = 0;
     gulong _videoSinkProbeId = 0;
     gulong _eosProbeId = 0;

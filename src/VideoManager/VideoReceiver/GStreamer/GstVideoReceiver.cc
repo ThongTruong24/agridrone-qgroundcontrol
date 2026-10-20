@@ -1641,10 +1641,13 @@ void GstVideoReceiver::_onNewPad(GstElement *element, GstPad *pad, gpointer data
 
 GstPadProbeReturn GstVideoReceiver::_teeProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
 {
-    Q_UNUSED(pad); Q_UNUSED(info)
+    Q_UNUSED(pad);
 
     if (user_data) {
         GstVideoReceiver *pThis = static_cast<GstVideoReceiver*>(user_data);
+        if (GstBuffer *buf = gst_pad_probe_info_get_buffer(info)) {
+            pThis->_receivedBytes.fetch_add(gst_buffer_get_size(buf), std::memory_order_relaxed);
+        }
         pThis->_noteTeeFrame();
     }
 

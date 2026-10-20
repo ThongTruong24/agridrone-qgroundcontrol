@@ -24,6 +24,7 @@ private slots:
     void _testWritePipelineDotReturnsEmptyOnWriteFailure();
     void _testCompleteInit();
     void _testCreateVideoReceiver();
+    void _testTeeProbeCountsBytes();
     void _testRecordingSinkAcceptsElementaryStreams_data();
     void _testRecordingSinkAcceptsElementaryStreams();
     void _testRecordingSinkFinalizesMidStreamH265Mp4();
