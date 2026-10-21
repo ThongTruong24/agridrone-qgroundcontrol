@@ -1,0 +1,28 @@
+# Run with: cmake -P cmake/modules/tests/test_toolchain_windows_host.cmake
+cmake_minimum_required(VERSION 3.25)
+set(_sandbox "${CMAKE_CURRENT_BINARY_DIR}/qgc-toolchain-host-fixture")
+set(CMAKE_SOURCE_DIR "${_sandbox}/src")
+set(CMAKE_BINARY_DIR "${_sandbox}/build")
+file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+set(CMAKE_HOST_WIN32 TRUE)
+set(WIN32 FALSE)
+set(CMAKE_AUTOGEN_PARALLEL 1)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../..")
+
+# Compiler optimization checks are unrelated to this host filesystem test.
+function(qgc_enable_pie)
+endfunction()
+function(qgc_enable_ipo)
+endfunction()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../Toolchain.cmake")
+set(_link "${CMAKE_SOURCE_DIR}/compile_commands.json")
+set(_created FALSE)
+if(IS_SYMLINK "${_link}" OR EXISTS "${_link}")
+    set(_created TRUE)
+endif()
+file(REMOVE_RECURSE "${_sandbox}")
+if(_created)
+    message(FATAL_ERROR "Cross-compiling on Windows must not require source-tree symlink privileges")
+endif()
+message(STATUS "Windows hosts skip the compile_commands symlink when cross-compiling")

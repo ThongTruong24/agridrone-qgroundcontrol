@@ -21,13 +21,13 @@
       "name": "Windows",
       "displayName": "Windows x64",
       "inherits": ["windows-base"],
-      "binaryDir": "${sourceParentDir}/build/Windows"
+      "binaryDir": "${sourceDir}/build/Windows"
     },
     {
       "name": "Windows-arm64",
       "displayName": "Windows ARM64",
       "inherits": ["windows-base"],
-      "binaryDir": "${sourceParentDir}/build/Windows-arm64",
+      "binaryDir": "${sourceDir}/build/Windows-arm64",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release;Debug",
         "QT_HOST_PATH": "$penv{QT_HOST_PATH}"

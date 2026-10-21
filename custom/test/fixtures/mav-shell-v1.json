@@ -1,0 +1,330 @@
+{
+ "schema_version": 1,
+ "protocol_version": 1,
+ "header_format": "<2sBB16sII",
+ "state_format": "<16sBBIIIHIBBBH",
+ "ack_format": "<BBIIII",
+ "semantics": "valid: pack(opcode, session, request_id, arg, body) == wire and unpack(wire) returns the same fields. invalid: unpack returns None (no state change). state/ack: body bytes of the 41-byte STATE and 18-byte ACK bodies.",
+ "valid": [
+  {
+   "name": "open",
+   "opcode": 1,
+   "session_hex": "00000000000000000000000000000000",
+   "request_id": 0,
+   "arg": 0,
+   "body_hex": "000102030405060708090a0b0c0d0e0f",
+   "wire_hex": "54530101000000000000000000000000000000000000000000000000000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "name": "query_pre_session",
+   "opcode": 2,
+   "session_hex": "00000000000000000000000000000000",
+   "request_id": 0,
+   "arg": 0,
+   "body_hex": "000102030405060708090a0b0c0d0e0f",
+   "wire_hex": "54530102000000000000000000000000000000000000000000000000000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "name": "query_live_nonce_trailing_zero",
+   "opcode": 2,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 0,
+   "arg": 0,
+   "body_hex": "0102030405060708090a0b0c0d0e0000",
+   "wire_hex": "54530102a0a1a2a3a4a5a6a7a8a9aaabacadaeaf00000000000000000102030405060708090a0b0c0d0e0000"
+  },
+  {
+   "name": "begin_auth_max_len",
+   "opcode": 3,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 1,
+   "arg": 128,
+   "body_hex": "24da1b81d0b16df6428eee73c69fcb2a93c76bc6df706f0c6670fe6bfe800464",
+   "wire_hex": "54530103a0a1a2a3a4a5a6a7a8a9aaabacadaeaf010000008000000024da1b81d0b16df6428eee73c69fcb2a93c76bc6df706f0c6670fe6bfe800464"
+  },
+  {
+   "name": "begin_auth_min_len",
+   "opcode": 3,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 1,
+   "arg": 1,
+   "body_hex": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+   "wire_hex": "54530103a0a1a2a3a4a5a6a7a8a9aaabacadaeaf01000000010000002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+  },
+  {
+   "name": "begin_line_empty",
+   "opcode": 4,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 0,
+   "body_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "wire_hex": "54530104a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000000000000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "name": "begin_line_max_len",
+   "opcode": 4,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 1024,
+   "body_hex": "2edc986847e209b4016e141a6dc8716d3207350f416969382d431539bf292e4a",
+   "wire_hex": "54530104a0a1a2a3a4a5a6a7a8a9aaabacadaeaf02000000000400002edc986847e209b4016e141a6dc8716d3207350f416969382d431539bf292e4a"
+  },
+  {
+   "name": "data_full_trailing_nul",
+   "opcode": 5,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 42,
+   "body_hex": "6563686f206869204142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f000000",
+   "wire_hex": "54530105a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000002a0000006563686f206869204142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f000000"
+  },
+  {
+   "name": "data_single_nul",
+   "opcode": 5,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 0,
+   "body_hex": "00",
+   "wire_hex": "54530105a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000000000000"
+  },
+  {
+   "name": "data_counter_max",
+   "opcode": 5,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 4294967295,
+   "arg": 4294967295,
+   "body_hex": "7a",
+   "wire_hex": "54530105a0a1a2a3a4a5a6a7a8a9aaabacadaeafffffffffffffffff7a"
+  },
+  {
+   "name": "commit",
+   "opcode": 6,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 0,
+   "body_hex": "",
+   "wire_hex": "54530106a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000000000000"
+  },
+  {
+   "name": "interrupt",
+   "opcode": 7,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 1,
+   "arg": 2,
+   "body_hex": "",
+   "wire_hex": "54530107a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0100000002000000"
+  },
+  {
+   "name": "close",
+   "opcode": 8,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 0,
+   "body_hex": "",
+   "wire_hex": "54530108a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000000000000"
+  },
+  {
+   "name": "state_ready",
+   "opcode": 128,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 0,
+   "arg": 0,
+   "body_hex": "000102030405060708090a0b0c0d0e0f02000b00000001000000080000000000070000000405000000",
+   "wire_hex": "54530180a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0000000000000000000102030405060708090a0b0c0d0e0f02000b00000001000000080000000000070000000405000000"
+  },
+  {
+   "name": "state_locked_pre_session",
+   "opcode": 128,
+   "session_hex": "00000000000000000000000000000000",
+   "request_id": 0,
+   "arg": 0,
+   "body_hex": "000102030405060708090a0b0c0d0e0f0601ffffffff01000000080000003c00070000000307000000",
+   "wire_hex": "54530180000000000000000000000000000000000000000000000000000102030405060708090a0b0c0d0e0f0601ffffffff01000000080000003c00070000000307000000"
+  },
+  {
+   "name": "ack_commit_accepted",
+   "opcode": 129,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 2,
+   "arg": 0,
+   "body_hex": "06050000000008000000010000000c000000",
+   "wire_hex": "54530181a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000000000006050000000008000000010000000c000000"
+  },
+  {
+   "name": "output_utf8_split",
+   "opcode": 130,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 5,
+   "arg": 1,
+   "body_hex": "68c3a96c6c6f201b5b306d20e29c",
+   "wire_hex": "54530182a0a1a2a3a4a5a6a7a8a9aaabacadaeaf050000000100000068c3a96c6c6f201b5b306d20e29c"
+  },
+  {
+   "name": "output_max",
+   "opcode": 130,
+   "session_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "request_id": 6,
+   "arg": 1,
+   "body_hex": "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+   "wire_hex": "54530182a0a1a2a3a4a5a6a7a8a9aaabacadaeaf06000000010000006f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f"
+  }
+ ],
+ "invalid": [
+  {
+   "name": "raw_text",
+   "wire_hex": "726177207368656c6c20636f6d6d616e640a"
+  },
+  {
+   "name": "truncated_header",
+   "wire_hex": "54530106a0a1a2a3a4a5a6a7a8a9aaabacadaeaf02000000000000"
+  },
+  {
+   "name": "bad_magic",
+   "wire_hex": "54580106a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000000000000"
+  },
+  {
+   "name": "unknown_version",
+   "wire_hex": "54530206a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000000000000"
+  },
+  {
+   "name": "unknown_opcode_9",
+   "wire_hex": "54530109a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0000000000000000"
+  },
+  {
+   "name": "unknown_opcode_131",
+   "wire_hex": "54530183a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0000000000000000"
+  },
+  {
+   "name": "body_too_long",
+   "wire_hex": "54530105a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000000000061616161616161616161616161616161616161616161616161616161616161616161616161616161616161"
+  },
+  {
+   "name": "open_nonzero_session",
+   "wire_hex": "54530101a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0000000000000000000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "name": "open_nonzero_request",
+   "wire_hex": "54530101000000000000000000000000000000000100000000000000000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "name": "open_short_nonce",
+   "wire_hex": "54530101000000000000000000000000000000000000000000000000000102030405060708090a0b0c0d0e"
+  },
+  {
+   "name": "query_long_nonce",
+   "wire_hex": "54530102a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0000000000000000000102030405060708090a0b0c0d0e0f00"
+  },
+  {
+   "name": "begin_auth_zero_len",
+   "wire_hex": "54530103a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0100000000000000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "name": "begin_auth_129",
+   "wire_hex": "54530103a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0100000081000000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "name": "begin_auth_zero_session",
+   "wire_hex": "545301030000000000000000000000000000000001000000010000002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+  },
+  {
+   "name": "begin_line_1025",
+   "wire_hex": "54530104a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000001040000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "name": "begin_line_short_digest",
+   "wire_hex": "54530104a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000001000000ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48"
+  },
+  {
+   "name": "data_empty",
+   "wire_hex": "54530105a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000000000000"
+  },
+  {
+   "name": "commit_with_body",
+   "wire_hex": "54530106a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000000000000"
+  },
+  {
+   "name": "commit_nonzero_arg",
+   "wire_hex": "54530106a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000001000000"
+  },
+  {
+   "name": "close_nonzero_arg",
+   "wire_hex": "54530108a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0200000001000000"
+  },
+  {
+   "name": "interrupt_with_body",
+   "wire_hex": "54530107a0a1a2a3a4a5a6a7a8a9aaabacadaeaf010000000200000078"
+  },
+  {
+   "name": "state_40_bytes",
+   "wire_hex": "54530180a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0000000000000000000102030405060708090a0b0c0d0e0f02000b000000010000000800000000000700000004050000"
+  },
+  {
+   "name": "state_nonzero_request",
+   "wire_hex": "54530180a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0100000000000000000102030405060708090a0b0c0d0e0f02000b00000001000000080000000000070000000405000000"
+  },
+  {
+   "name": "ack_nonzero_arg",
+   "wire_hex": "54530181a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000100000006050000000008000000010000000c000000"
+  },
+  {
+   "name": "ack_17_bytes",
+   "wire_hex": "54530181a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000000000006050000000008000000010000000c0000"
+  },
+  {
+   "name": "output_empty",
+   "wire_hex": "54530182a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0500000001000000"
+  }
+ ],
+ "state": [
+  {
+   "name": "ready_after_accepted_line",
+   "fields": {
+    "client_nonce": "000102030405060708090a0b0c0d0e0f",
+    "state": 2,
+    "reason": 0,
+    "revision": 11,
+    "output_epoch": 1,
+    "next_transaction": 8,
+    "retry_after_seconds": 0,
+    "last_transaction": 7,
+    "last_kind": 4,
+    "last_result": 5,
+    "phase": 0,
+    "next_offset": 0
+   },
+   "body_hex": "000102030405060708090a0b0c0d0e0f02000b00000001000000080000000000070000000405000000"
+  },
+  {
+   "name": "locked_revision_max",
+   "fields": {
+    "client_nonce": "000102030405060708090a0b0c0d0e0f",
+    "state": 6,
+    "reason": 1,
+    "revision": 4294967295,
+    "output_epoch": 1,
+    "next_transaction": 8,
+    "retry_after_seconds": 60,
+    "last_transaction": 7,
+    "last_kind": 3,
+    "last_result": 7,
+    "phase": 0,
+    "next_offset": 0
+   },
+   "body_hex": "000102030405060708090a0b0c0d0e0f0601ffffffff01000000080000003c00070000000307000000"
+  }
+ ],
+ "ack": [
+  {
+   "name": "commit_accepted",
+   "fields": {
+    "acknowledged_opcode": 6,
+    "result": 5,
+    "next_offset": 0,
+    "next_transaction": 8,
+    "output_epoch": 1,
+    "revision": 12
+   },
+   "body_hex": "06050000000008000000010000000c000000"
+  }
+ ]
+}

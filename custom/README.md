@@ -106,6 +106,26 @@ Kiểm tra trên MK15 với link UDP tới IP Ethernet của Pi (ví dụ `192.1
 không nối FC, giữ thêm một link UDP khác đang mở, bật/tắt ba cờ và kiểm tra topic ROS2 trên Pi.
 Lặp lại khi nối FC; cả hai trường hợp phải đi qua link Companion.
 
+## Companion Shell
+
+Mở **Analyze → Companion Shell** để kết nối, đăng nhập và gửi từng dòng lệnh tới
+dịch vụ shell trên Companion. Dịch vụ dùng heartbeat component **192**, độc lập
+với FC và phiên điều khiển Companion component 191. Đóng rồi mở lại trang giữ
+phiên hiện có; **Disconnect** kết thúc phiên và các tiến trình của phiên đó.
+
+Test shell dùng dữ liệu chuẩn được đóng gói tại `custom/test/fixtures/`, không
+yêu cầu checkout meta-repository.
+
+## Bandwidth và cấu hình camera
+
+Mở rộng popup Companion để xem bảng bandwidth: dữ liệu `CC_BANDWIDTH` từ Companion
+và bộ đếm nhận tại QGC, lấy trung bình ba giây. Khi Companion không báo dữ liệu,
+giao diện hiển thị trạng thái thiếu dữ liệu thay vì coi là tốc độ bằng 0.
+
+Popup camera bổ sung lựa chọn lật ảnh 180°. Camera/Vision cho phép gửi SET khi
+giá trị hiện tại chưa đọc xong và xác nhận kết quả bằng ACK từ Companion.
+Links/hotspot vẫn yêu cầu đủ giá trị trước khi áp dụng; quy tắc khóa khi ARM giữ nguyên.
+
 ## Tài liệu chính thức
 
 - [Build QGroundControl](https://docs.qgroundcontrol.com/master/en/qgc-dev-guide/getting_started/)

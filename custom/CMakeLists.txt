@@ -17,6 +17,7 @@ qt_add_library(AgriDroneModule STATIC)
 set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneAIVisionDropPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionShellPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CameraStatusIndicator.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/StreamStatusPage.qml
@@ -24,6 +25,7 @@ set(AGRIDRONE_QML_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionStatusPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionToggleSwitch.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionOperationLog.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/qml/CompanionBandwidthPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewButton.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneFlyViewDropPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/qml/AgriDroneSettings.qml
@@ -93,6 +95,8 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionMavlinkDispatcherTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLinksServiceTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionBandwidthTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionBandwidthTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionLogServiceTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/AgriDroneControllerTest.cc
@@ -101,15 +105,31 @@ if(QGC_BUILD_TESTING AND NOT ANDROID)
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionParamServiceTest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionProtocolTest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionProtocolTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionShellControllerTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/CompanionShellControllerTest.h
+    )
+    # Bundle the shell protocol fixtures so tests also work in a standalone QGC checkout.
+    set(MAV_SHELL_FIXTURES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures")
+    foreach(_fx mav-shell-v1.json mav-shell-transitions-v1.json)
+        if(NOT EXISTS "${MAV_SHELL_FIXTURES_DIR}/${_fx}")
+            message(FATAL_ERROR "MAV shell fixture missing: ${MAV_SHELL_FIXTURES_DIR}/${_fx}")
+        endif()
+    endforeach()
+    qt_add_resources(AgriDroneModule "mav_shell_fixtures"
+        PREFIX "/shellfixtures"
+        BASE "${MAV_SHELL_FIXTURES_DIR}"
+        FILES "${MAV_SHELL_FIXTURES_DIR}/mav-shell-v1.json" "${MAV_SHELL_FIXTURES_DIR}/mav-shell-transitions-v1.json"
     )
     include(QGCTest)
     add_qgc_test(CompanionControllerTest LABELS Unit Vehicle)
     add_qgc_test(CompanionVehicleLifecycleTest LABELS Integration Vehicle)
     add_qgc_test(CompanionMavlinkDispatcherTest LABELS Unit)
     add_qgc_test(CompanionLinksServiceTest LABELS Unit)
+    add_qgc_test(CompanionBandwidthTest LABELS Unit)
     add_qgc_test(CompanionLogServiceTest LABELS Unit)
     add_qgc_test(CompanionParamServiceTest LABELS Unit)
     add_qgc_test(CompanionProtocolTest LABELS Unit)
+    add_qgc_test(CompanionShellControllerTest LABELS Unit)
     add_qgc_test(AgriDroneControllerTest LABELS Unit Vehicle)
 endif()
 
@@ -121,12 +141,18 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ITelemetryHandler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Companion/CompanionProtocol.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionShellProtocol.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionShellProtocol.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionShellController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionShellController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLinksService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionParamService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionMavlinkDispatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionBandwidth.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionBandwidth.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionLogService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CompanionConfigService.cc

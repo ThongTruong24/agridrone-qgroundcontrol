@@ -69,6 +69,7 @@ public:
     bool hasVideo() const;
     bool isStreamSource() const;
     bool isUvc() const;
+    qint64 primaryReceivedBytes() const;
     bool recording() const { return _recording; }
     bool streaming() const { return _streaming; }
     double aspectRatio() const;

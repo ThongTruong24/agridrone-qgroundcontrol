@@ -22,9 +22,9 @@ ToolIndicatorPage {
     property bool readbackRequested: false
     property string localError: ""
     readonly property string title: qsTr("Vehicle Stream Status")
-    // Reasons 2-7: nothing to configure yet (no CC heartbeat, node or readback); 9: another operation is running.
+    // Reasons 2-5 and 7 (catalog not loaded): nothing to configure; 9: another operation is running. A missing value is not a reason (see cam.reading).
     // Camera and Vision need only the CC heartbeat (reason 0 implies it), not a Vehicle (spec §5).
-    readonly property bool hideControls: reason.code >= 2 && reason.code <= 7
+    readonly property bool hideControls: (reason.code >= 2 && reason.code <= 5) || reason.code === 7
     readonly property bool editable: reason.code === 0 && !modeState.pending
     readonly property bool visionEditable: editable && visionReason.code === 0
     showExpand: true
@@ -46,7 +46,9 @@ ToolIndicatorPage {
     }
     function ensureReadback() {
         if (!cam.available) { readbackRequested = false; return }
-        if (!readbackRequested && !cam.pending) {
+        // The list is loaded at session start and resynced every 30 s: ask only when a value is really missing.
+        const known = cam.configured && cam.configured.resolution !== undefined && cam.configured.resolution !== null
+        if (!known && !readbackRequested && !cam.pending) {
             readbackRequested = true
             CompanionController.requestCcParameters()
         }
@@ -62,6 +64,8 @@ ToolIndicatorPage {
         required property string paramId
         required property var presets   // the CC's option list; the running value is added when it is not in it
         required property var value
+        property var running: undefined // the active stream's running value, used until the CC has read the configured one
+        readonly property var shown: (value !== undefined && value !== null) ? value : running
         property bool numeric: true
         property bool allowed: page.editable
         Layout.fillWidth: true
@@ -69,9 +73,9 @@ ToolIndicatorPage {
         QGCLabel { text: combo.label }
         QGCComboBox {
             Layout.fillWidth: true
-            model: page.choices(combo.presets, combo.value)
-            currentIndex: model.indexOf(String(combo.value))
-            enabled: combo.allowed && combo.value !== undefined && combo.value !== null
+            model: page.choices(combo.presets, combo.shown)
+            currentIndex: model.indexOf(String(combo.shown))
+            enabled: combo.allowed && combo.shown !== undefined && combo.shown !== null
             onActivated: page.send(combo.stream, combo.paramId, combo.numeric ? Number(currentText) : currentText)
         }
     }
@@ -164,33 +168,61 @@ ToolIndicatorPage {
                     // Only a mode change can be cancelled: a stuck rebuild of the running settings is not undone by resending the mode.
                     QGCButton {
                         objectName: "cancelStreamOperation"
-                        visible: !!page.modeState.modeOperation
+                        // Nothing to resend when the previous mode is unknown (-1): cancelStreamOperation sends nothing then.
+                        visible: !!page.modeState.modeOperation && page.mode !== -1
                         text: qsTr("Hủy")
                         onClicked: CompanionController.cancelStreamOperation()
                     }
                     QGCLabel { visible: !!page.modeState.blocked; text: page.modeState.blocked || ""; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     QGCLabel { visible: page.localError !== ""; text: page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
 
+                    QGCLabel {
+                        objectName: "readingNote"
+                        visible: !!page.cam.reading
+                        text: qsTr("Đang đọc tham số…")
+                        font.pointSize: ScreenTools.smallFontPointSize
+                        Layout.fillWidth: true
+                    }
                     QGCLabel { text: qsTr("Cấu hình Video"); font.bold: true; objectName: "videoConfig" }
                     ParamCombo {
                         label: qsTr("Resolution"); stream: "camera"; paramId: "CC_CAM_RES"; numeric: false
                         value: page.cam.configured ? page.cam.configured.resolution : undefined
+                        running: page.mode === 1 && page.current.connected ? page.current.resolution : undefined
                         presets: page.cam.options ? page.cam.options.resolution : []
                     }
                     ParamCombo {
                         label: qsTr("FPS"); stream: "camera"; paramId: "CC_CAM_FPS"
                         value: page.cam.configured ? page.cam.configured.fps : undefined
+                        running: page.mode === 1 && page.current.connected ? page.current.fps : undefined
                         presets: page.cam.options ? page.cam.options.fps : []
                     }
                     ParamCombo {
                         label: qsTr("Bitrate (kbps)"); stream: "camera"; paramId: "CC_CAM_BR"
                         value: page.cam.configured ? page.cam.configured.bitrate : undefined
+                        running: page.mode === 1 && page.current.connected ? page.current.bitrate : undefined
                         presets: page.cam.options ? page.cam.options.bitrate : []
                     }
                     ParamCombo {
                         label: qsTr("Encode"); stream: "camera"; paramId: "CC_CAM_CODEC"; numeric: false
                         value: page.cam.configured ? page.cam.configured.codec : undefined
+                        running: page.mode === 1 && page.current.connected ? page.current.codec : undefined
                         presets: page.codecs(page.cam)
+                    }
+                    QGCCheckBoxSlider {
+                        id: flipSwitch
+                        objectName: "cameraFlipSwitch"
+                        Layout.fillWidth: true
+                        text: qsTr("Lật ảnh 180°")
+                        // Not "rotation": that would override QQuickItem::rotation and turn the switch itself upside down.
+                        readonly property var configuredRotation: page.cam.configured ? page.cam.configured.rotation : undefined
+                        checked: flipSwitch.configuredRotation === 180
+                        enabled: page.editable && flipSwitch.configuredRotation !== undefined && flipSwitch.configuredRotation !== null
+                        // The switch follows the CC's confirmed value: the click is sent, then the binding comes back, so it
+                        // moves when the readback arrives and stays put when the CC refuses.
+                        onClicked: {
+                            page.send("camera", "CC_CAM_ROT", flipSwitch.checked ? 180 : 0)
+                            flipSwitch.checked = Qt.binding(() => flipSwitch.configuredRotation === 180)
+                        }
                     }
                     UrlField { stream: "camera"; paramId: "CC_CAM_PUB_URL"; configured: page.cam.configuredUrl || ""; objectNameOfEdit: "rtspDestination" }
 
@@ -198,16 +230,19 @@ ToolIndicatorPage {
                     ParamCombo {
                         label: qsTr("Resolution"); stream: "vision"; paramId: "CC_VIS_RES"; numeric: false
                         value: page.vis.configured ? page.vis.configured.resolution : undefined
+                        running: page.mode === 2 && page.current.connected ? page.current.resolution : undefined
                         presets: page.vis.options ? page.vis.options.resolution : []
                     }
                     ParamCombo {
                         label: qsTr("Bitrate (kbps)"); stream: "vision"; paramId: "CC_VIS_BR"
                         value: page.vis.configured ? page.vis.configured.bitrate : undefined
+                        running: page.mode === 2 && page.current.connected ? page.current.bitrate : undefined
                         presets: page.vis.options ? page.vis.options.bitrate : []
                     }
                     ParamCombo {
                         label: qsTr("Encode"); stream: "vision"; paramId: "CC_VIS_CODEC"; numeric: false
                         value: page.vis.configured ? page.vis.configured.codec : undefined
+                        running: page.mode === 2 && page.current.connected ? page.current.codec : undefined
                         presets: page.codecs(page.vis)
                     }
                     UrlField { stream: "vision"; paramId: "CC_VIS_OUT_URL"; configured: page.vis.configuredUrl || ""; objectNameOfEdit: "visionRtspDestination" }

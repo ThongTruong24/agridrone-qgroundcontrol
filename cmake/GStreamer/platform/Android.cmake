@@ -60,6 +60,14 @@ macro(_qgc_discover_android_sdk)
         set(GStreamer_AUTO_DOWNLOADED TRUE)
     endif()
 
+    # Windows archive extraction can omit the SDK's libpng.pc symlink.
+    # gstopengl requires that alias; a regular copy works without symlink privileges.
+    set(_gst_png_pc_dir "${GStreamer_ROOT_DIR}/lib/pkgconfig")
+    if(CMAKE_HOST_WIN32 AND NOT EXISTS "${_gst_png_pc_dir}/libpng.pc"
+       AND EXISTS "${_gst_png_pc_dir}/libpng16.pc")
+        configure_file("${_gst_png_pc_dir}/libpng16.pc" "${_gst_png_pc_dir}/libpng.pc" COPYONLY)
+    endif()
+
     gstreamer_create_layout_target(
         SDK_ROOT "${GStreamer_ROOT_DIR}"
         TYPE     STATIC_TARBALL

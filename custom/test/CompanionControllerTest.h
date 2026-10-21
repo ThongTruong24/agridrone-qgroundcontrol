@@ -13,12 +13,29 @@ private slots:
     void _testAiVisionStateInvariant();
     void _testAiVisionTransmissionWithoutVehicle();
     void _testAiVisionTrackPointGuards();
+    void _testAiVisionWithoutVehicle();
+    void _testAiVisionOnlyOnCompanionLinkWithoutVehicle();
+    void _testEveryOperationStepIsLogged();
+    void _testUnknownPreviousValueIsLoggedAsQuestionMark();
+    void _testLogNeverContainsTheHotspotPassword();
+    void _testUnconfirmedOperationLogsOneSummary();
+    void _testReplacedModeOperationLogsOneSummary();
+    void _testFailedReplaceLogsNoReplacedSummary();
     void _testToolbarLegacyAndIndependentStreams();
     void _testGeneratedMessageDecoding();
     void _testSourceFiltering();
     void _testStaleAndReset();
     void _testToolbarPopupsLoad();
+    void _testParameterGateUsesCatalogAndGroup();
     void _testLinkApplyWithoutVehicle();
+    void _testSetWhileLoadingNeedsOnlyItsOwnValues();
+    void _testRequestWhileLoadingSendsNoSecondList();
+    void _testStreamSetNeedsNoKnownValueAndNewSessionForgetsOldOnes();
+    void _testCancelStreamOperationWithoutKnownModeSendsNothing();
+    void _testNewSessionWhileOldListLoadsSendsOneList();
+    void _testStaleValueAroundAckDoesNotBreakAnOperation();
+    void _testBackgroundReadsWaitForARunningOperation();
+    void _testReconnectReadbackIsNotHeld();
     void _testApplyNotResentWhenCompanionSilent();
     void _testFirstCompanionLocksWithoutVehicle();
     void _testFailedSendEndsOperationAtOnce();
@@ -55,8 +72,13 @@ private slots:
     void _testBaudOptionsFromCatalog();
     void _testNeedsApplyMatchesApplyOnlyRule();
     void _testCatalogLoadErrorBlocksCompanion();
+    void _testStreamPopupIsNotLockedByMissingValues();
     void _testCompanionPopupWithoutVehicle();
     void _testCompanionPopupSaveCancelAndRetry();
+    void _testBandwidthFromCompanion();
+    void _testBandwidthPanel();
+    void _testBandwidthQgcSideWithoutCcSupport();
+    void _testBandwidthLateBytesIgnoreDeadLink();
 };
 
 class CompanionVehicleLifecycleTest : public VehicleTestManualConnect

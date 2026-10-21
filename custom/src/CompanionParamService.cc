@@ -164,7 +164,7 @@ void CompanionParamService::resetState()
     _isLoading = false;
     _loadingTimeoutTimer->stop();
     _expectedCount = 0;
-    _receivedCount = 0;
+    _receivedIndices.clear();
 
     for (const QString& name : _order) {
         _isLiveSynced[name] = false;
@@ -235,6 +235,9 @@ void CompanionParamService::requestParameters()
         emit logMessage("PARAM", "ERR", "Cannot request CC params: no Companion heartbeat yet", 3);
         return;
     }
+    // A second LIST while one runs makes the CC send the whole list again (`another_pass`, mavlink_parameters.cpp:838), and
+    // every popup open and every refused click would repeat that on the SIYI UART. A stuck load ends by the 6 s timeout.
+    if (_isLoading) return;
 
     mavlink_message_t msg;
     mavlink_msg_param_ext_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
@@ -244,7 +247,7 @@ void CompanionParamService::requestParameters()
         return; // not loading: nothing will answer, and loading refuses every operation
     }
     _isLoading = true;
-    _receivedCount = 0;
+    _receivedIndices.clear();
     _expectedCount = 0;
     _loadingTimeoutTimer->start();
     emit isLoadingChanged();
@@ -358,7 +361,7 @@ bool CompanionParamService::sendSingleParamSet(const QString& name, const QVaria
 
     if (!_transport.send(msg)) return false;
     _isPending[name] = true;
-    emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, meta.isSecret ? QStringLiteral("<hidden>") : value.toString()), 6);
+    emit logMessage("PARAM", "TX", QString("PARAM_EXT_SET: %1 = %2").arg(name, loggable(name, value)), 6);
     return true;
 }
 
@@ -514,7 +517,7 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
             }
         }
 
-        _receivedCount++;
+        _receivedIndices.insert(pval.param_index);
         _expectedCount = pval.param_count;
 
         // Reset timer on each incoming param
@@ -522,7 +525,7 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
             _loadingTimeoutTimer->start();
         }
 
-        if (_expectedCount > 0 && _receivedCount >= _expectedCount) {
+        if (_isLoading && _expectedCount > 0 && _receivedIndices.size() >= _expectedCount) {
             _isLoading = false;
             _loadingTimeoutTimer->stop();
             emit isLoadingChanged();
@@ -543,7 +546,8 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
         QString paramId = QString::fromUtf8(idBuf).trimmed();
 
         QVariant ackVal = _decodeValue(pack.param_value, pack.param_type);
-        if (pack.param_result != PARAM_ACK_IN_PROGRESS) {
+        // Only an ACCEPTED ACK carries a value the CC confirmed; a refusal may carry zeros (CC had none) and changes nothing.
+        if (pack.param_result == PARAM_ACK_ACCEPTED) {
             _liveValues[paramId] = ackVal;
             _isLiveSynced[paramId] = true;
         }
@@ -558,7 +562,7 @@ bool CompanionParamService::handleMavlinkMessage(const mavlink_message_t& messag
             _isModified[paramId] = false;
             _updateModifiedCount();
             emit parameterSaved(paramId, true, QString("Parameter %1 applied successfully").arg(paramId));
-            emit logMessage("PARAM", "RX", QString("PARAM_EXT_ACK: %1 = %2 (Accepted)").arg(paramId, _meta.value(paramId).isSecret ? QStringLiteral("<hidden>") : ackVal.toString()), 6);
+            emit logMessage("PARAM", "RX", QString("PARAM_EXT_ACK: %1 = %2 (Accepted)").arg(paramId, loggable(paramId, ackVal)), 6);
         } else {
             _isPending[paramId] = false;
             emit parameterSaved(paramId, false, QString("Parameter %1 rejected by CC (code %2)").arg(paramId).arg(pack.param_result));
@@ -577,7 +581,8 @@ void CompanionParamService::_onLoadingTimeout()
     if (_isLoading) {
         _isLoading = false;
         emit isLoadingChanged();
-        emit logMessage("PARAM", "WARN", QString("Param request timed out (%1 received)").arg(_receivedCount), 4);
+        emit logMessage("PARAM", "WARN", QString("Param request timed out (%1 received)").arg(_receivedIndices.size()), 4);
+        readMissing(); // the load ended by timeout, so the CC left values out; read those now (the 4 s timer ran while the LIST was still arriving)
     }
 }
 
@@ -660,6 +665,8 @@ int CompanionParamService::syncedCount() const
 void CompanionParamService::readMissing()
 {
     if (!_transport.valid()) return;
+    if (_backgroundHold && _backgroundHold()) return;
+    if (_isLoading) return; // the running LIST brings the values; a LIST longer than 4 s ends in _onLoadingTimeout() or the next LIST, which run readMissing()
 
     int requested = 0;
     for (const QString& name : _order) {

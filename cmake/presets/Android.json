@@ -19,13 +19,13 @@
       "name": "Android",
       "displayName": "Android Release",
       "inherits": ["release", "android-base"],
-      "binaryDir": "${sourceParentDir}/build/Android"
+      "binaryDir": "${sourceDir}/build/Android"
     },
     {
       "name": "Android-debug",
       "displayName": "Android Debug",
       "inherits": ["debug", "android-base"],
-      "binaryDir": "${sourceParentDir}/build/Android-debug"
+      "binaryDir": "${sourceDir}/build/Android-debug"
     }
   ],
   "buildPresets": [

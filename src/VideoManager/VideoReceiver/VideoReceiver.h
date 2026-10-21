@@ -36,6 +36,9 @@ public:
     QGCVideoStreamInfo *videoStreamInfo() { return _videoStreamInfo; }
     QString recordingOutput() const { return _recordingOutput; }
 
+    /// Encoded bytes received since creation (streaming thread); -1 when this backend cannot count.
+    virtual qint64 receivedBytes() const { return -1; }
+
     virtual void setSink(VideoSinkHandle sink) { if (sink != _sink) { _sink = sink; emit sinkChanged(_sink); } }
     virtual void setWidget(QQuickItem *widget) { if (widget != _widget) { _widget = widget; emit widgetChanged(_widget); } }
     void setName(const QString &name) { if (name != _name) { _name = name; emit nameChanged(_name); } }

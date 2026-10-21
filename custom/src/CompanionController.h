@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QHash>
 #include <QtCore/QMap>
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
@@ -14,6 +15,7 @@
 #include "LinkInterface.h"
 #include <optional>
 
+#include "CompanionBandwidth.h"
 #include "CompanionConfigService.h"
 #include "CompanionLinksService.h"
 #include "CompanionLogService.h"
@@ -34,6 +36,7 @@ class CompanionController : public QObject
     Q_PROPERTY(QVariantMap hotspotState READ hotspotState NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantList serialLinks READ serialLinks NOTIFY toolbarStateChanged)
     Q_PROPERTY(QVariantMap companionState READ companionState NOTIFY toolbarStateChanged)
+    Q_PROPERTY(QVariantMap bandwidth READ bandwidth NOTIFY bandwidthChanged)
 
     QML_ELEMENT
     QML_SINGLETON
@@ -330,13 +333,15 @@ public:
 
     QVariantMap hotspotState() const;
     QVariantMap companionState() const;
+    QVariantMap bandwidth() const;
 
     QVariantList serialLinks() const { return _linksService->serialLinks(); }
 
     /// The single stream mode, CC_STREAM_MODE: 0 Off, 1 Video, 2 Vision. A new mode while a mode operation is pending
     /// replaces it (the CC cancels the old one). Camera/Vision writes are allowed while armed.
     Q_INVOKABLE bool setStreamMode(int mode);
-    /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way.
+    /// Sends the previous confirmed mode again. Only a mode operation can be cancelled this way. Sends nothing when the
+    /// previous mode is unknown.
     Q_INVOKABLE void cancelStreamOperation();
     /// {mode (confirmed, -1 unknown), pendingMode, modeOperation, pending, operation, reason, visionFresh,
     ///  blocked (why a mode SET would be refused now; empty = allowed)}
@@ -434,6 +439,7 @@ signals:
     void mavlinkLogMessage(const QString& category, const QString& direction, const QString& message, int severity);
     void logEntriesChanged();
     void toolbarStateChanged();
+    void bandwidthChanged();
     void vehicleConnectedChanged();
     void cameraChanged();
     void visionChanged();
@@ -455,6 +461,11 @@ private:
     void _showToast(const QString& msg, bool isError);
     void _logMavlink(const QString& category, const QString& direction, const QString& message, int severity);
     void _clearTelemetryState();
+    void _sampleBandwidth();
+    void _addLinkRxBytes(LinkInterface *link, qsizetype size);
+    CompanionBandwidth _bandwidth;
+    QHash<LinkInterface*, quint64> _linkRxBytes; // GUI thread only
+    qint64 _ccSessionStartMs = -1;               // _toolbarClock time of the heartbeat that opened this CC session
     CompanionTransport transport();
     void onCompanionLost();
     void onCompanionSessionStarted();
@@ -491,6 +502,7 @@ private:
                                      QStringList* rideAlong = nullptr) const;
     bool modeOperationPending() const;
     QString modeBlockedReason() const;
+    bool parameterAllowed(const QString& group, const QString& id) const;
     bool refuseStream(const QString& why);
     void syncPlayerToMode();
     int _playerMode{-1};             // the confirmed mode QGC's player was last (re)started for; -1 none yet
@@ -539,6 +551,7 @@ private:
         bool readbackRequested{false};
     };
 
+    void logOperationSummary(const ToolbarOperation& op, const QString& result); ///< one log line per operation: `ok`, `error: ..`, `unconfirmed`, `replaced`
     std::optional<ToolbarOperation> _toolbarOperation;
     QTimer* _toolbarOperationTimer{nullptr};
     QTimer* _setAckTimer{nullptr};

@@ -565,6 +565,23 @@ void GStreamerTest::_testCreateVideoReceiver()
     QVERIFY(qobject_cast<GstVideoReceiver*>(receiver.get()));
 }
 
+// 2026-10-20: the tee probe counts encoded bytes for the bandwidth table (QGC side of the camera hop).
+void GStreamerTest::_testTeeProbeCountsBytes()
+{
+    std::unique_ptr<VideoReceiver> receiver(GStreamer::createVideoReceiver(nullptr));
+    auto *gst = qobject_cast<GstVideoReceiver*>(receiver.get());
+    QVERIFY(gst);
+    QCOMPARE(gst->receivedBytes(), qint64(0));
+    GstBuffer *buffer = gst_buffer_new_allocate(nullptr, 1400, nullptr);
+    GstPadProbeInfo info{};
+    info.type = GST_PAD_PROBE_TYPE_BUFFER;
+    info.data = buffer;
+    QCOMPARE(GstVideoReceiver::_teeProbe(nullptr, &info, gst), GST_PAD_PROBE_OK);
+    QCOMPARE(GstVideoReceiver::_teeProbe(nullptr, &info, gst), GST_PAD_PROBE_OK);
+    QCOMPARE(gst->receivedBytes(), qint64(2800));
+    gst_buffer_unref(buffer);
+}
+
 void GStreamerTest::_testRecordingSinkAcceptsElementaryStreams_data()
 {
     QTest::addColumn<QString>("capsString");

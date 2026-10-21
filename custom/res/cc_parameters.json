@@ -251,6 +251,22 @@
             "applyMode": "live"
         },
         {
+            "name": "CC_CAM_ROT",
+            "group": "Camera",
+            "label": "Lật ảnh 180°",
+            "type": "uint32",
+            "default": 180,
+            "units": "deg",
+            "options": [
+                "0",
+                "180"
+            ],
+            "description": "Video rotation in degrees (0 or 180), applied live",
+            "reboot": false,
+            "readOnly": false,
+            "applyMode": "live"
+        },
+        {
             "name": "CC_CAM_MODEL",
             "group": "Camera",
             "label": "Camera Hardware Model",

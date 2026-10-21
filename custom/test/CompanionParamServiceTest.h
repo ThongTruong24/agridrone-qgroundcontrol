@@ -27,4 +27,8 @@ private slots:
     void _testFailedRequestSendDoesNotLoad();
     void _testNoValueBeforeCompanionAnswers();
     void _testCatalogLoadErrorHasNoParameters();
+    void _testListCompletesOnDistinctIndicesOnly();
+    void _testRefusedAckKeepsTheKnownValue();
+    void _testReadMissingWaitsForARunningList();
+    void _testListTimeoutReadsWhatTheCcLeftOut();
 };

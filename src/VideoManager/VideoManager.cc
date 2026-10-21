@@ -458,6 +458,16 @@ double VideoManager::thermalHfov() const
     return _videoSettings->aspectRatio()->rawValue().toDouble();
 }
 
+qint64 VideoManager::primaryReceivedBytes() const
+{
+    for (const VideoReceiver *receiver : _videoReceivers) {
+        if (!receiver->isThermal()) {
+            return receiver->receivedBytes();
+        }
+    }
+    return -1;
+}
+
 bool VideoManager::hasThermal() const
 {
     for (VideoReceiver *receiver : _videoReceivers) {

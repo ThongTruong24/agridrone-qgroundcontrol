@@ -54,41 +54,4 @@ bool sendCommand(Vehicle* vehicle, uint8_t targetSystem, MAV_CMD command, float 
     return sendMessage(vehicle, link, msg);
 }
 
-bool sendAiVisionControl(const SharedLinkInterfacePtr& companionLink, bool boundingBox, bool tracking, bool following)
-{
-    if (!companionLink || !companionLink->isConnected()) {
-        return false;
-    }
-    mavlink_cc_ai_vision_control_t payload{};
-    payload.bounding_box = boundingBox ? 1 : 0;
-    payload.tracking = tracking ? 1 : 0;
-    payload.following = following ? 1 : 0;
-    mavlink_message_t message{};
-    mavlink_msg_cc_ai_vision_control_encode_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                                 MAVLinkProtocol::getComponentId(), companionLink->mavlinkChannel(),
-                                                 &message, &payload);
-    return sendMessage(nullptr, companionLink, message);
-}
-
-bool sendTrackPoint(Vehicle* vehicle, uint8_t targetSystem, double x, double y, double radius,
-                    const SharedLinkInterfacePtr& companionLink)
-{
-    const SharedLinkInterfacePtr link = companionLink ? companionLink : resolveLink(vehicle);
-    if (!link || !link->isConnected()) {
-        return false;
-    }
-    mavlink_command_long_t payload{};
-    payload.target_system = targetSystem;
-    payload.target_component = kCompId;
-    payload.command = MAV_CMD_CAMERA_TRACK_POINT;
-    payload.param1 = static_cast<float>(x);
-    payload.param2 = static_cast<float>(y);
-    payload.param3 = static_cast<float>(radius);
-    // Point selection is an event: transmit once without the ACK/retry queue.
-    mavlink_message_t message{};
-    mavlink_msg_command_long_encode_chan(MAVLinkProtocol::instance()->getSystemId(), MAVLinkProtocol::getComponentId(),
-                                         link->mavlinkChannel(), &message, &payload);
-    return sendMessage(vehicle, link, message);
-}
-
 }  // namespace Companion

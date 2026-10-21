@@ -255,6 +255,7 @@ ToolIndicatorPage {
                 onClicked: page.localError = CompanionController.saveCompanionGroup("hotspot") ? "" : qsTr("Không gửi được lệnh lưu")
             }
             QGCLabel { text: page.network.error || page.localError; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            CompanionBandwidthPanel { Layout.fillWidth: true; bw: CompanionController.bandwidth }
         }
     }
 }

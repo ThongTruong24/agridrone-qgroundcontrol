@@ -457,3 +457,71 @@ void CompanionParamServiceTest::_testCatalogLoadErrorHasNoParameters()
         QVERIFY(service.options("CC_L0_BAUD").isEmpty());
     }
 }
+
+// 2026-10-16: every PARAM_EXT_VALUE counted toward the LIST (repeats, another client's LIST, values pushed after an
+// ACK), so the load could end with parameters still missing; on the vehicle a second LIST re-sent 17 values to all.
+void CompanionParamServiceTest::_testListCompletesOnDistinctIndicesOnly()
+{
+    CompanionParamService service;
+    service.setTransport({1, 0, [](const mavlink_message_t&) { return true; }});
+    service.requestParameters();
+    QVERIFY(service.isLoading());
+    for (int i = 0; i < 3; ++i)
+        QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 460800, 2, 0)));
+    QVERIFY(service.isLoading()); // index 1 has not arrived yet
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L1_BAUD", 115200, 2, 1)));
+    QVERIFY(!service.isLoading());
+}
+
+// 2026-10-16: an ACK the CC sends without a value (it had none confirmed) carries zeros; QGC took them as the live value.
+void CompanionParamServiceTest::_testRefusedAckKeepsTheKnownValue()
+{
+    CompanionParamService service;
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 460800, 16, 1)));
+    QVERIFY(service.handleMavlinkMessage(packParamExtAck(1, 191, "CC_L0_BAUD", 0, 2 /* FAILED */)));
+    QCOMPARE(service.confirmedValue("CC_L0_BAUD").toUInt(), 460800u);
+    QVERIFY(service.handleMavlinkMessage(packParamExtAck(1, 191, "CC_L0_BAUD", 921600, 0 /* ACCEPTED */)));
+    QCOMPARE(service.confirmedValue("CC_L0_BAUD").toUInt(), 921600u);
+}
+
+// 2026-10-19: the READ burst of an earlier LIST's timer ran while a new LIST was still arriving.
+void CompanionParamServiceTest::_testReadMissingWaitsForARunningList()
+{
+    CompanionParamService service;
+    QList<mavlink_message_t> sent;
+    service.setTransport({1, 0, [&](const mavlink_message_t& m) { sent.append(m); return true; }});
+    service.requestParameters();
+    QVERIFY(service.isLoading());
+    sent.clear();
+    service.readMissing();
+    QVERIFY(sent.isEmpty());
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 460800, 1, 0))); // ends the LIST
+    QVERIFY(!service.isLoading());
+    service.readMissing();
+    QVERIFY(!sent.isEmpty());
+    QCOMPARE(sent.last().msgid, uint32_t(MAVLINK_MSG_ID_PARAM_EXT_REQUEST_READ));
+}
+
+// 2026-10-19: a LIST the CC answers partly ends by timeout; its missing values were never READ once readMissing() waited for the LIST.
+void CompanionParamServiceTest::_testListTimeoutReadsWhatTheCcLeftOut()
+{
+    CompanionParamService service;
+    QList<mavlink_message_t> sent;
+    service.setTransport({1, 0, [&](const mavlink_message_t& m) { sent.append(m); return true; }});
+    service.requestParameters();
+    QVERIFY(service.handleMavlinkMessage(packParamExtValue(1, 191, "CC_L0_BAUD", 460800, 3, 0))); // count 3: LIST stays incomplete
+    QVERIFY(service.isLoading());
+    sent.clear();
+    QVERIFY(QMetaObject::invokeMethod(&service, "_onLoadingTimeout", Qt::DirectConnection));
+    QVERIFY(!service.isLoading());
+    bool readAny = false;
+    for (const mavlink_message_t& m : sent) {
+        if (m.msgid != MAVLINK_MSG_ID_PARAM_EXT_REQUEST_READ) continue;
+        readAny = true;
+        char id[17] = {};
+        mavlink_msg_param_ext_request_read_get_param_id(&m, id);
+        QVERIFY(QString::fromLatin1(id) != QLatin1String("CC_L0_BAUD"));
+        QVERIFY(QString::fromLatin1(id) != QLatin1String("CC_AP_PASS")); // the secret is never READ
+    }
+    QVERIFY(readAny);
+}
